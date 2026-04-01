@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Flip-Dot Display</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: sans-serif; }
+    canvas { display: block; }
+
+    #top-ui {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      z-index: 10;
+    }
+    .img-input {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .img-input label {
+      color: rgba(255,255,255,0.7);
+      font-size: 13px;
+    }
+    .img-input .thumb {
+      width: 48px;
+      height: 28px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.3);
+      object-fit: cover;
+      cursor: pointer;
+    }
+    .img-input .thumb.empty {
+      background: rgba(255,255,255,0.1);
+    }
+    .img-input input[type="file"] { display: none; }
+
+    #ui {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 10;
+    }
+    #ui button {
+      padding: 10px 24px;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-anim { background: rgba(255,255,255,0.08); }
+    .btn-anim:hover { background: rgba(100,255,160,0.2); }
+    .btn-sys { background: rgba(255,255,255,0.08); }
+    .btn-sys:hover { background: rgba(255,255,255,0.2); }
+  </style>
+</head>
+<body>
+  <div id="top-ui">
+    <div class="img-input">
+      <label>Front:</label>
+      <img id="thumb-front" class="thumb empty" title="Click to load front image">
+      <input type="file" id="input-front" accept="image/*">
+    </div>
+    <div class="img-input">
+      <label>Back:</label>
+      <img id="thumb-back" class="thumb empty" title="Click to load back image">
+      <input type="file" id="input-back" accept="image/*">
+    </div>
+  </div>
+
+  <div id="ui">
+    <button id="btn-ripple" class="btn-anim">Ripple</button>
+    <button id="btn-seq-down" class="btn-anim">Down</button>
+    <button id="btn-seq-up" class="btn-anim">Up</button>
+    <button id="btn-seq-right" class="btn-anim">Right</button>
+    <button id="btn-seq-left" class="btn-anim">Left</button>
+    <button id="btn-reset" class="btn-sys">Reset</button>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- Config ---
+    const COLS = 48;
+    const ROWS = 27;
+    const DOT_SPACING = 1.0;
+    const DOT_RADIUS = DOT_SPACING / 2;
+    const FLIP_DURATION = 0.2;
+    const STAGGER_DELAY = 0.007;
+    const LINE_DELAY = 0.08;
+    const CROP_SIZE = 64;
+
+    // --- Scene setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0a);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(0, 0, 40);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 15;
+    controls.maxDistance = 80;
+
+    // --- Lighting ---
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(5, 10, 15);
+    scene.add(dirLight);
+    const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+    backLight.position.set(-5, -5, -10);
+    scene.add(backLight);
+
+    // --- Texture helpers ---
+    function createCropCanvas(img, col, row, flipH) {
+      const canvas = document.createElement('canvas');
+      canvas.width = CROP_SIZE;
+      canvas.height = CROP_SIZE;
+      const ctx = canvas.getContext('2d');
+
+      const sx = (col / COLS) * img.width;
+      const sy = (row / ROWS) * img.height;
+      const sw = img.width / COLS;
+      const sh = img.height / ROWS;
+
+      if (flipH) {
+        ctx.translate(CROP_SIZE, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, CROP_SIZE, CROP_SIZE);
+      return canvas;
+    }
+
+    function createCropTexture(img, col, row, flipH = false) {
+      const canvas = createCropCanvas(img, col, row, flipH);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      return tex;
+    }
+
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    // --- Shared geometry ---
+    // Front face: faces +Z (toward camera)
+    const frontGeo = new THREE.CircleGeometry(DOT_RADIUS, 32);
+    // Back face: faces -Z, rotateX(PI) so that after group.rotation.x=PI the image is upright
+    const backGeo = new THREE.CircleGeometry(DOT_RADIUS, 32);
+    backGeo.rotateX(Math.PI);
+
+    // --- Dot class ---
+    class FlipDot {
+      constructor(group, col, row, frontTex, backTex) {
+        this.group = group;
+        this.col = col;
+        this.row = row;
+        this.frontTex = frontTex;
+        this.backTex = backTex;
+        this.showingFront = true;
+        this.flipping = false;
+        this.flipStartTime = 0;
+        this.startRotation = 0;
+      }
+
+      startFlip(time) {
+        if (this.flipping) return;
+        this.flipping = true;
+        this.flipStartTime = time;
+        this.startRotation = this.showingFront ? 0 : Math.PI;
+      }
+
+      update(time) {
+        if (!this.flipping) return;
+        const elapsed = time - this.flipStartTime;
+        const t = Math.min(elapsed / FLIP_DURATION, 1);
+        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        this.group.rotation.x = this.startRotation + eased * Math.PI;
+        if (t >= 1) {
+          this.flipping = false;
+          this.showingFront = !this.showingFront;
+        }
+      }
+
+      reset() {
+        this.flipping = false;
+        this.showingFront = true;
+        this.group.rotation.x = 0;
+      }
+
+      updateTexture(side, img) {
+        const canvas = createCropCanvas(img, this.col, this.row, false);
+        if (side === 'front') {
+          this.frontTex.image = canvas;
+          this.frontTex.needsUpdate = true;
+        } else {
+          this.backTex.image = canvas;
+          this.backTex.needsUpdate = true;
+        }
+      }
+    }
+
+    // --- Main ---
+    async function init() {
+      const [img1, img2] = await Promise.all([
+        loadImage('images/image1.png'),
+        loadImage('images/image2.png')
+      ]);
+
+      document.getElementById('thumb-front').src = 'images/image1.png';
+      document.getElementById('thumb-front').classList.remove('empty');
+      document.getElementById('thumb-back').src = 'images/image2.png';
+      document.getElementById('thumb-back').classList.remove('empty');
+
+      const dots = [];
+      const offsetX = (COLS - 1) * DOT_SPACING / 2;
+      const offsetY = (ROWS - 1) * DOT_SPACING / 2;
+
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          const frontTex = createCropTexture(img1, col, row);
+          const backTex = createCropTexture(img2, col, row);
+
+          const frontMat = new THREE.MeshStandardMaterial({ map: frontTex, roughness: 0.3, metalness: 0.1 });
+          const backMat = new THREE.MeshStandardMaterial({ map: backTex, roughness: 0.3, metalness: 0.1 });
+
+          const frontMesh = new THREE.Mesh(frontGeo, frontMat);
+          frontMesh.position.z = 0.02;
+          const backMesh = new THREE.Mesh(backGeo, backMat);
+          backMesh.position.z = -0.02;
+
+          const group = new THREE.Group();
+          group.add(frontMesh, backMesh);
+          group.position.set(
+            col * DOT_SPACING - offsetX,
+            (ROWS - 1 - row) * DOT_SPACING - offsetY,
+            0
+          );
+          scene.add(group);
+          dots.push(new FlipDot(group, col, row, frontTex, backTex));
+        }
+      }
+
+      // Background panel
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(COLS * DOT_SPACING + 1, ROWS * DOT_SPACING + 1),
+        new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.9 })
+      );
+      panel.position.z = -0.2;
+      scene.add(panel);
+
+      // --- Image input ---
+      function setupImageInput(inputId, thumbId, side) {
+        const input = document.getElementById(inputId);
+        const thumb = document.getElementById(thumbId);
+        thumb.addEventListener('click', () => input.click());
+        input.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const url = URL.createObjectURL(file);
+          thumb.src = url;
+          thumb.classList.remove('empty');
+          const img = new Image();
+          img.onload = () => {
+            dots.forEach(dot => dot.updateTexture(side, img));
+            URL.revokeObjectURL(url);
+          };
+          img.src = url;
+        });
+      }
+
+      setupImageInput('input-front', 'thumb-front', 'front');
+      setupImageInput('input-back', 'thumb-back', 'back');
+
+      // --- Animation ---
+      let animating = false;
+
+      function triggerRipple() {
+        if (animating) return;
+        animating = true;
+        const centerCol = (COLS - 1) / 2;
+        const centerRow = (ROWS - 1) / 2;
+        const indices = dots.map((_, i) => i);
+        indices.sort((a, b) => {
+          const da = Math.hypot(dots[a].col - centerCol, dots[a].row - centerRow);
+          const db = Math.hypot(dots[b].col - centerCol, dots[b].row - centerRow);
+          return da - db;
+        });
+        const totalTime = indices.length * STAGGER_DELAY + FLIP_DURATION;
+        indices.forEach((idx, i) => {
+          setTimeout(() => dots[idx].startFlip(clock.getElapsedTime()), i * STAGGER_DELAY * 1000);
+        });
+        setTimeout(() => { animating = false; }, totalTime * 1000);
+      }
+
+      function triggerSequence(direction) {
+        if (animating) return;
+        animating = true;
+        const groups = new Map();
+        dots.forEach((dot, idx) => {
+          let key;
+          switch (direction) {
+            case 'down':  key = dot.row; break;
+            case 'up':    key = (ROWS - 1) - dot.row; break;
+            case 'right': key = dot.col; break;
+            case 'left':  key = (COLS - 1) - dot.col; break;
+          }
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(idx);
+        });
+        const sortedKeys = [...groups.keys()].sort((a, b) => a - b);
+        const totalTime = sortedKeys.length * LINE_DELAY + FLIP_DURATION;
+        sortedKeys.forEach((key, lineIdx) => {
+          setTimeout(() => {
+            const time = clock.getElapsedTime();
+            groups.get(key).forEach(idx => dots[idx].startFlip(time));
+          }, lineIdx * LINE_DELAY * 1000);
+        });
+        setTimeout(() => { animating = false; }, totalTime * 1000);
+      }
+
+      function resetDots() {
+        animating = false;
+        dots.forEach(dot => dot.reset());
+      }
+
+      // --- UI ---
+      document.getElementById('btn-ripple').onclick = () => triggerRipple();
+      document.getElementById('btn-seq-down').onclick = () => triggerSequence('down');
+      document.getElementById('btn-seq-up').onclick = () => triggerSequence('up');
+      document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
+      document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
+      document.getElementById('btn-reset').onclick = () => resetDots();
+
+      // --- Render loop ---
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        dots.forEach(dot => dot.update(clock.getElapsedTime()));
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    init();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
