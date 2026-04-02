@@ -95,22 +95,28 @@
   {
     "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
     }
   }
   </script>
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import GUI from 'lil-gui';
 
-    // --- Config ---
-    const COLS = 48;
-    const ROWS = 27;
-    const DOT_SPACING = 1.0;
-    const DOT_RADIUS = DOT_SPACING / 2;
-    const FLIP_DURATION = 0.2;
-    const STAGGER_DELAY = 0.007;
-    const LINE_DELAY = 0.08;
+    // --- Config (mutable via GUI) ---
+    const params = {
+      cols: 48,
+      rows: 27,
+      spacing: 1.0,
+      squash: 0.5,
+      roughness: 0.3,
+      metalness: 0.1,
+      flipDuration: 0.2,
+      staggerDelay: 0.007,
+      lineDelay: 0.08,
+    };
     const CROP_SIZE = 64;
 
     // --- Scene setup ---
@@ -150,10 +156,10 @@
       canvas.height = CROP_SIZE;
       const ctx = canvas.getContext('2d');
 
-      const sx = (col / COLS) * img.width;
-      const sy = (row / ROWS) * img.height;
-      const sw = img.width / COLS;
-      const sh = img.height / ROWS;
+      const sx = (col / params.cols) * img.width;
+      const sy = (row / params.rows) * img.height;
+      const sw = img.width / params.cols;
+      const sh = img.height / params.rows;
 
       if (flipH) {
         ctx.translate(CROP_SIZE, 0);
@@ -182,42 +188,36 @@
       });
     }
 
-    // --- Shared geometry: oblate spheroid (Go-stone) as single closed mesh ---
-    const STONE_SQUASH = 0.5;
+    // --- Shared geometry builder ---
     const W_SEGS = 32;
     const H_SEGS = 32;
 
-    const stoneGeo = (() => {
-      const geo = new THREE.SphereGeometry(DOT_RADIUS, W_SEGS, H_SEGS);
+    function buildStoneGeo(radius, squash) {
+      const geo = new THREE.SphereGeometry(radius, W_SEGS, H_SEGS);
       const pos = geo.attributes.position;
       const uvs = geo.attributes.uv;
 
-      // Squash Y axis to create Go-stone shape (before rotation)
       for (let i = 0; i < pos.count; i++) {
-        pos.setY(i, pos.getY(i) * STONE_SQUASH);
+        pos.setY(i, pos.getY(i) * squash);
       }
       pos.needsUpdate = true;
 
-      // Rotate so north pole faces +Z (toward camera)
       geo.rotateX(Math.PI / 2);
       geo.computeVertexNormals();
 
-      // Remap UVs: planar projection, flip v for back half so texture is upright after flip
       for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i);
         const y = pos.getY(i);
         const z = pos.getZ(i);
-        const u = (x / DOT_RADIUS + 1) / 2;
+        const u = (x / radius + 1) / 2;
         if (z >= 0) {
-          uvs.setXY(i, u, (y / DOT_RADIUS + 1) / 2);
+          uvs.setXY(i, u, (y / radius + 1) / 2);
         } else {
-          uvs.setXY(i, u, 1 - (y / DOT_RADIUS + 1) / 2);
+          uvs.setXY(i, u, 1 - (y / radius + 1) / 2);
         }
       }
       uvs.needsUpdate = true;
 
-      // Two material groups: front hemisphere (mat 0), back hemisphere (mat 1)
-      // SphereGeometry: pole rows = W_SEGS*3 indices, middle rows = W_SEGS*6 indices
       geo.clearGroups();
       const halfH = H_SEGS / 2;
       const frontCount = W_SEGS * 3 + (halfH - 1) * W_SEGS * 6;
@@ -226,13 +226,11 @@
       geo.addGroup(frontCount, backCount, 1);
 
       return geo;
-    })();
+    }
+
+    let stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
 
     // --- Dot class ---
-    // --- Material presets ---
-    const MAT_MATTE = { roughness: 0.3, metalness: 0.1 };
-    const MAT_GLOSSY = { roughness: 0.05, metalness: 0.1 };
-    let currentMatPreset = MAT_MATTE;
 
     class FlipDot {
       constructor(group, col, row, frontTex, backTex) {
@@ -249,11 +247,11 @@
         this.startRotation = 0;
       }
 
-      applyPreset(preset) {
+      applyMaterial() {
         for (const mat of [this.frontMat, this.backMat]) {
           if (mat) {
-            mat.roughness = preset.roughness;
-            mat.metalness = preset.metalness;
+            mat.roughness = params.roughness;
+            mat.metalness = params.metalness;
           }
         }
       }
@@ -268,7 +266,7 @@
       update(time) {
         if (!this.flipping) return;
         const elapsed = time - this.flipStartTime;
-        const t = Math.min(elapsed / FLIP_DURATION, 1);
+        const t = Math.min(elapsed / params.flipDuration, 1);
         const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         this.group.rotation.x = this.startRotation + eased * Math.PI;
         if (t >= 1) {
@@ -307,42 +305,49 @@
       document.getElementById('thumb-back').src = 'images/image2.png';
       document.getElementById('thumb-back').classList.remove('empty');
 
-      const dots = [];
-      const offsetX = (COLS - 1) * DOT_SPACING / 2;
-      const offsetY = (ROWS - 1) * DOT_SPACING / 2;
+      let dots = [];
 
-      for (let row = 0; row < ROWS; row++) {
-        for (let col = 0; col < COLS; col++) {
-          const frontTex = createCropTexture(img1, col, row);
-          const backTex = createCropTexture(img2, col, row);
+      function buildDots() {
+        // Remove existing dots
+        dots.forEach(d => { scene.remove(d.group); });
+        dots = [];
 
-          const frontMat = new THREE.MeshStandardMaterial({ map: frontTex, ...MAT_MATTE });
-          const backMat = new THREE.MeshStandardMaterial({ map: backTex, ...MAT_MATTE });
+        stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
 
-          const stoneMesh = new THREE.Mesh(stoneGeo, [frontMat, backMat]);
+        const offsetX = (params.cols - 1) * params.spacing / 2;
+        const offsetY = (params.rows - 1) * params.spacing / 2;
 
-          const group = new THREE.Group();
-          group.add(stoneMesh);
-          group.position.set(
-            col * DOT_SPACING - offsetX,
-            (ROWS - 1 - row) * DOT_SPACING - offsetY,
-            0
-          );
-          scene.add(group);
-          const dot = new FlipDot(group, col, row, frontTex, backTex);
-          dot.frontMat = frontMat;
-          dot.backMat = backMat;
-          dots.push(dot);
+        for (let row = 0; row < params.rows; row++) {
+          for (let col = 0; col < params.cols; col++) {
+            const frontTex = createCropTexture(img1, col, row);
+            const backTex = createCropTexture(img2, col, row);
+
+            const frontMat = new THREE.MeshStandardMaterial({
+              map: frontTex, roughness: params.roughness, metalness: params.metalness
+            });
+            const backMat = new THREE.MeshStandardMaterial({
+              map: backTex, roughness: params.roughness, metalness: params.metalness
+            });
+
+            const stoneMesh = new THREE.Mesh(stoneGeo, [frontMat, backMat]);
+
+            const group = new THREE.Group();
+            group.add(stoneMesh);
+            group.position.set(
+              col * params.spacing - offsetX,
+              (params.rows - 1 - row) * params.spacing - offsetY,
+              0
+            );
+            scene.add(group);
+            const dot = new FlipDot(group, col, row, frontTex, backTex);
+            dot.frontMat = frontMat;
+            dot.backMat = backMat;
+            dots.push(dot);
+          }
         }
       }
 
-      // // Background panel (disabled)
-      // const panel = new THREE.Mesh(
-      //   new THREE.PlaneGeometry(COLS * DOT_SPACING + 1, ROWS * DOT_SPACING + 1),
-      //   new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.9 })
-      // );
-      // panel.position.z = -0.3;
-      // scene.add(panel);
+      buildDots();
 
       // --- Image input ---
       function setupImageInput(inputId, thumbId, side) {
@@ -381,9 +386,9 @@
           const db = Math.hypot(dots[b].col - centerCol, dots[b].row - centerRow);
           return da - db;
         });
-        const totalTime = indices.length * STAGGER_DELAY + FLIP_DURATION;
+        const totalTime = indices.length * params.staggerDelay + params.flipDuration;
         indices.forEach((idx, i) => {
-          setTimeout(() => dots[idx].startFlip(clock.getElapsedTime()), i * STAGGER_DELAY * 1000);
+          setTimeout(() => dots[idx].startFlip(clock.getElapsedTime()), i * params.staggerDelay * 1000);
         });
         setTimeout(() => { animating = false; }, totalTime * 1000);
       }
@@ -396,20 +401,20 @@
           let key;
           switch (direction) {
             case 'down':  key = dot.row; break;
-            case 'up':    key = (ROWS - 1) - dot.row; break;
+            case 'up':    key = (params.rows - 1) - dot.row; break;
             case 'right': key = dot.col; break;
-            case 'left':  key = (COLS - 1) - dot.col; break;
+            case 'left':  key = (params.cols - 1) - dot.col; break;
           }
           if (!groups.has(key)) groups.set(key, []);
           groups.get(key).push(idx);
         });
         const sortedKeys = [...groups.keys()].sort((a, b) => a - b);
-        const totalTime = sortedKeys.length * LINE_DELAY + FLIP_DURATION;
+        const totalTime = sortedKeys.length * params.lineDelay + params.flipDuration;
         sortedKeys.forEach((key, lineIdx) => {
           setTimeout(() => {
             const time = clock.getElapsedTime();
             groups.get(key).forEach(idx => dots[idx].startFlip(time));
-          }, lineIdx * LINE_DELAY * 1000);
+          }, lineIdx * params.lineDelay * 1000);
         });
         setTimeout(() => { animating = false; }, totalTime * 1000);
       }
@@ -429,10 +434,11 @@
 
       const btnGlossy = document.getElementById('btn-glossy');
       btnGlossy.onclick = () => {
-        const isGlossy = currentMatPreset === MAT_GLOSSY;
-        currentMatPreset = isGlossy ? MAT_MATTE : MAT_GLOSSY;
+        const isGlossy = params.roughness < 0.15;
+        params.roughness = isGlossy ? 0.3 : 0.05;
         btnGlossy.textContent = isGlossy ? 'Glossy' : 'Matte';
-        dots.forEach(dot => dot.applyPreset(currentMatPreset));
+        dots.forEach(dot => dot.applyMaterial());
+        gui.controllersRecursive().forEach(c => c.updateDisplay());
       };
 
       const bgColors = [
@@ -467,13 +473,72 @@
         applyBgTheme(bgColors[bgIdx]);
       };
 
+      // --- GUI ---
+      const gui = new GUI({ title: 'Parameters' });
+
+      // FPS display
+      const fpsData = { fps: '0' };
+      gui.add(fpsData, 'fps').name('FPS').disable();
+
+      const gridFolder = gui.addFolder('Grid');
+      gridFolder.add(params, 'cols', 4, 96, 1).name('Columns').onFinishChange(buildDots);
+      gridFolder.add(params, 'rows', 4, 54, 1).name('Rows').onFinishChange(buildDots);
+      gridFolder.add(params, 'spacing', 0.5, 2.0, 0.05).name('Spacing').onFinishChange(buildDots);
+      gridFolder.add(params, 'squash', 0.1, 1.0, 0.05).name('Squash').onFinishChange(buildDots);
+
+      const matFolder = gui.addFolder('Material');
+      matFolder.add(params, 'roughness', 0, 1, 0.01).name('Roughness').onChange(() => {
+        dots.forEach(dot => dot.applyMaterial());
+      });
+      matFolder.add(params, 'metalness', 0, 1, 0.01).name('Metalness').onChange(() => {
+        dots.forEach(dot => dot.applyMaterial());
+      });
+
+      const animFolder = gui.addFolder('Animation');
+      animFolder.add(params, 'flipDuration', 0.05, 1.0, 0.01).name('Flip Duration');
+      animFolder.add(params, 'staggerDelay', 0.001, 0.05, 0.001).name('Stagger Delay');
+      animFolder.add(params, 'lineDelay', 0.01, 0.3, 0.01).name('Line Delay');
+
+      // Shortcuts hint below GUI
+      const hint = document.createElement('div');
+      hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
+      hint.textContent = 'A: toggle GUI  |  D: toggle UI';
+      gui.domElement.appendChild(hint);
+
+      // --- Keyboard toggles ---
+      const topUi = document.getElementById('top-ui');
+      const bottomUi = document.getElementById('ui');
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'a' || e.key === 'A') {
+          gui.domElement.style.display = gui.domElement.style.display === 'none' ? '' : 'none';
+        }
+        if (e.key === 'd' || e.key === 'D') {
+          const hidden = topUi.style.display === 'none';
+          topUi.style.display = hidden ? '' : 'none';
+          bottomUi.style.display = hidden ? '' : 'none';
+        }
+      });
+
       // --- Render loop ---
       const clock = new THREE.Clock();
+      let frameCount = 0;
+      let lastFpsTime = performance.now();
+      const fpsCtrl = gui.controllersRecursive().find(c => c.property === 'fps');
+
       function animate() {
         requestAnimationFrame(animate);
         dots.forEach(dot => dot.update(clock.getElapsedTime()));
         controls.update();
         renderer.render(scene, camera);
+
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsTime >= 500) {
+          fpsData.fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(0);
+          frameCount = 0;
+          lastFpsTime = now;
+          if (fpsCtrl) fpsCtrl.updateDisplay();
+        }
       }
       animate();
     }
