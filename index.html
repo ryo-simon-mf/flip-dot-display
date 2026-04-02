@@ -6,7 +6,7 @@
   <title>3D Flip-Dot Display</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; font-family: sans-serif; }
+    body { background: #fff; overflow: hidden; font-family: sans-serif; }
     canvas { display: block; }
 
     #top-ui {
@@ -25,19 +25,19 @@
       gap: 8px;
     }
     .img-input label {
-      color: rgba(255,255,255,0.7);
+      color: rgba(0,0,0,0.6);
       font-size: 13px;
     }
     .img-input .thumb {
       width: 48px;
       height: 28px;
       border-radius: 4px;
-      border: 1px solid rgba(255,255,255,0.3);
+      border: 1px solid rgba(0,0,0,0.2);
       object-fit: cover;
       cursor: pointer;
     }
     .img-input .thumb.empty {
-      background: rgba(255,255,255,0.1);
+      background: rgba(0,0,0,0.08);
     }
     .img-input input[type="file"] { display: none; }
 
@@ -52,18 +52,18 @@
     }
     #ui button {
       padding: 10px 24px;
-      border: 1px solid rgba(255,255,255,0.3);
-      color: #fff;
+      border: 1px solid rgba(0,0,0,0.2);
+      color: #333;
       border-radius: 8px;
       cursor: pointer;
       font-size: 14px;
       backdrop-filter: blur(10px);
       transition: background 0.2s, border-color 0.2s;
     }
-    .btn-anim { background: rgba(255,255,255,0.08); }
-    .btn-anim:hover { background: rgba(100,255,160,0.2); }
-    .btn-sys { background: rgba(255,255,255,0.08); }
-    .btn-sys:hover { background: rgba(255,255,255,0.2); }
+    .btn-anim { background: rgba(0,0,0,0.06); }
+    .btn-anim:hover { background: rgba(0,0,0,0.12); }
+    .btn-sys { background: rgba(0,0,0,0.06); }
+    .btn-sys:hover { background: rgba(0,0,0,0.12); }
   </style>
 </head>
 <body>
@@ -87,6 +87,8 @@
     <button id="btn-seq-right" class="btn-anim">Right</button>
     <button id="btn-seq-left" class="btn-anim">Left</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
+    <button id="btn-glossy" class="btn-sys">Glossy</button>
+    <button id="btn-bg" class="btn-sys">BG: White</button>
   </div>
 
   <script type="importmap">
@@ -113,7 +115,7 @@
 
     // --- Scene setup ---
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
+    scene.background = new THREE.Color(0xffffff);
 
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
     camera.position.set(0, 0, 40);
@@ -130,11 +132,14 @@
     controls.maxDistance = 80;
 
     // --- Lighting ---
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    dirLight.position.set(5, 10, 15);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 15, 20);
     scene.add(dirLight);
-    const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+    const sideLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    sideLight.position.set(-15, 5, 10);
+    scene.add(sideLight);
+    const backLight = new THREE.DirectionalLight(0xffffff, 0.25);
     backLight.position.set(-5, -5, -10);
     scene.add(backLight);
 
@@ -177,14 +182,58 @@
       });
     }
 
-    // --- Shared geometry ---
-    // Front face: faces +Z (toward camera)
-    const frontGeo = new THREE.CircleGeometry(DOT_RADIUS, 32);
-    // Back face: faces -Z, rotateX(PI) so that after group.rotation.x=PI the image is upright
-    const backGeo = new THREE.CircleGeometry(DOT_RADIUS, 32);
-    backGeo.rotateX(Math.PI);
+    // --- Shared geometry: oblate spheroid (Go-stone) as single closed mesh ---
+    const STONE_SQUASH = 0.5;
+    const W_SEGS = 32;
+    const H_SEGS = 32;
+
+    const stoneGeo = (() => {
+      const geo = new THREE.SphereGeometry(DOT_RADIUS, W_SEGS, H_SEGS);
+      const pos = geo.attributes.position;
+      const uvs = geo.attributes.uv;
+
+      // Squash Y axis to create Go-stone shape (before rotation)
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, pos.getY(i) * STONE_SQUASH);
+      }
+      pos.needsUpdate = true;
+
+      // Rotate so north pole faces +Z (toward camera)
+      geo.rotateX(Math.PI / 2);
+      geo.computeVertexNormals();
+
+      // Remap UVs: planar projection, flip v for back half so texture is upright after flip
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        const u = (x / DOT_RADIUS + 1) / 2;
+        if (z >= 0) {
+          uvs.setXY(i, u, (y / DOT_RADIUS + 1) / 2);
+        } else {
+          uvs.setXY(i, u, 1 - (y / DOT_RADIUS + 1) / 2);
+        }
+      }
+      uvs.needsUpdate = true;
+
+      // Two material groups: front hemisphere (mat 0), back hemisphere (mat 1)
+      // SphereGeometry: pole rows = W_SEGS*3 indices, middle rows = W_SEGS*6 indices
+      geo.clearGroups();
+      const halfH = H_SEGS / 2;
+      const frontCount = W_SEGS * 3 + (halfH - 1) * W_SEGS * 6;
+      const backCount  = (halfH - 1) * W_SEGS * 6 + W_SEGS * 3;
+      geo.addGroup(0, frontCount, 0);
+      geo.addGroup(frontCount, backCount, 1);
+
+      return geo;
+    })();
 
     // --- Dot class ---
+    // --- Material presets ---
+    const MAT_MATTE = { roughness: 0.3, metalness: 0.1 };
+    const MAT_GLOSSY = { roughness: 0.05, metalness: 0.1 };
+    let currentMatPreset = MAT_MATTE;
+
     class FlipDot {
       constructor(group, col, row, frontTex, backTex) {
         this.group = group;
@@ -192,10 +241,21 @@
         this.row = row;
         this.frontTex = frontTex;
         this.backTex = backTex;
+        this.frontMat = null;
+        this.backMat = null;
         this.showingFront = true;
         this.flipping = false;
         this.flipStartTime = 0;
         this.startRotation = 0;
+      }
+
+      applyPreset(preset) {
+        for (const mat of [this.frontMat, this.backMat]) {
+          if (mat) {
+            mat.roughness = preset.roughness;
+            mat.metalness = preset.metalness;
+          }
+        }
       }
 
       startFlip(time) {
@@ -256,33 +316,33 @@
           const frontTex = createCropTexture(img1, col, row);
           const backTex = createCropTexture(img2, col, row);
 
-          const frontMat = new THREE.MeshStandardMaterial({ map: frontTex, roughness: 0.3, metalness: 0.1 });
-          const backMat = new THREE.MeshStandardMaterial({ map: backTex, roughness: 0.3, metalness: 0.1 });
+          const frontMat = new THREE.MeshStandardMaterial({ map: frontTex, ...MAT_MATTE });
+          const backMat = new THREE.MeshStandardMaterial({ map: backTex, ...MAT_MATTE });
 
-          const frontMesh = new THREE.Mesh(frontGeo, frontMat);
-          frontMesh.position.z = 0.02;
-          const backMesh = new THREE.Mesh(backGeo, backMat);
-          backMesh.position.z = -0.02;
+          const stoneMesh = new THREE.Mesh(stoneGeo, [frontMat, backMat]);
 
           const group = new THREE.Group();
-          group.add(frontMesh, backMesh);
+          group.add(stoneMesh);
           group.position.set(
             col * DOT_SPACING - offsetX,
             (ROWS - 1 - row) * DOT_SPACING - offsetY,
             0
           );
           scene.add(group);
-          dots.push(new FlipDot(group, col, row, frontTex, backTex));
+          const dot = new FlipDot(group, col, row, frontTex, backTex);
+          dot.frontMat = frontMat;
+          dot.backMat = backMat;
+          dots.push(dot);
         }
       }
 
-      // Background panel
-      const panel = new THREE.Mesh(
-        new THREE.PlaneGeometry(COLS * DOT_SPACING + 1, ROWS * DOT_SPACING + 1),
-        new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.9 })
-      );
-      panel.position.z = -0.2;
-      scene.add(panel);
+      // // Background panel (disabled)
+      // const panel = new THREE.Mesh(
+      //   new THREE.PlaneGeometry(COLS * DOT_SPACING + 1, ROWS * DOT_SPACING + 1),
+      //   new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.9 })
+      // );
+      // panel.position.z = -0.3;
+      // scene.add(panel);
 
       // --- Image input ---
       function setupImageInput(inputId, thumbId, side) {
@@ -366,6 +426,46 @@
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
       document.getElementById('btn-reset').onclick = () => resetDots();
+
+      const btnGlossy = document.getElementById('btn-glossy');
+      btnGlossy.onclick = () => {
+        const isGlossy = currentMatPreset === MAT_GLOSSY;
+        currentMatPreset = isGlossy ? MAT_MATTE : MAT_GLOSSY;
+        btnGlossy.textContent = isGlossy ? 'Glossy' : 'Matte';
+        dots.forEach(dot => dot.applyPreset(currentMatPreset));
+      };
+
+      const bgColors = [
+        { name: 'White', scene: 0xffffff, css: '#fff', dark: false },
+        { name: 'Black', scene: 0x0a0a0a, css: '#0a0a0a', dark: true },
+        { name: 'Gray',  scene: 0x888888, css: '#888', dark: false },
+      ];
+      let bgIdx = 0;
+      const btnBg = document.getElementById('btn-bg');
+
+      function applyBgTheme(bg) {
+        scene.background = new THREE.Color(bg.scene);
+        document.body.style.background = bg.css;
+        btnBg.textContent = 'BG: ' + bg.name;
+        // Switch UI colors for dark/light backgrounds
+        const uiButtons = document.querySelectorAll('#ui button');
+        const labels = document.querySelectorAll('.img-input label');
+        const thumbs = document.querySelectorAll('.img-input .thumb');
+        if (bg.dark) {
+          uiButtons.forEach(b => { b.style.color = '#fff'; b.style.borderColor = 'rgba(255,255,255,0.3)'; b.style.background = 'rgba(255,255,255,0.08)'; });
+          labels.forEach(l => l.style.color = 'rgba(255,255,255,0.7)');
+          thumbs.forEach(t => t.style.borderColor = 'rgba(255,255,255,0.3)');
+        } else {
+          uiButtons.forEach(b => { b.style.color = '#333'; b.style.borderColor = 'rgba(0,0,0,0.2)'; b.style.background = 'rgba(0,0,0,0.06)'; });
+          labels.forEach(l => l.style.color = 'rgba(0,0,0,0.6)');
+          thumbs.forEach(t => t.style.borderColor = 'rgba(0,0,0,0.2)');
+        }
+      }
+
+      btnBg.onclick = () => {
+        bgIdx = (bgIdx + 1) % bgColors.length;
+        applyBgTheme(bgColors[bgIdx]);
+      };
 
       // --- Render loop ---
       const clock = new THREE.Clock();
