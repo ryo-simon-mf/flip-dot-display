@@ -119,6 +119,7 @@
       staggerDelay: 0.007,
       lineDelay: 0.08,
       trailRadius: 1.5,
+      trailGradient: 0.03,
     };
     const CROP_SIZE = 64;
 
@@ -494,6 +495,10 @@
         sweepAxis = null;
         sweepLines = null;
         sweepLineIdx = 0;
+        sweepStartWorld = null;
+        sweepLastProj = 0;
+        sweepLastTime = 0;
+        sweepLineDelay = 0;
         btnMouseTrail.classList.remove('active');
         controls.enabled = true;
         dots.forEach(dot => dot.reset());
@@ -512,8 +517,12 @@
       // Sweep state
       let sweepDir = null;      // { x, y } normalized
       let sweepAxis = null;     // THREE.Vector3 flip axis
-      let sweepLines = null;    // [{ proj, indices[] }] sorted by projection
+      let sweepLines = null;    // [{ proj, dots: [{ idx, perpDist }] }] sorted by projection
       let sweepLineIdx = 0;     // how many lines already triggered
+      let sweepStartWorld = null;
+      let sweepLastProj = 0;
+      let sweepLastTime = 0;
+      let sweepLineDelay = 0;   // ms per line, derived from mouse speed
 
       function mouseToWorld(cx, cy) {
         _mouseNDC.x = (cx / window.innerWidth) * 2 - 1;
@@ -530,44 +539,75 @@
 
         sweepDir = { x: dx / len, y: dy / len };
         sweepAxis = new THREE.Vector3(-sweepDir.y, sweepDir.x, 0);
+        sweepStartWorld = fromWorld.clone();
 
         const offsetX = (params.cols - 1) * params.spacing / 2;
         const offsetY = (params.rows - 1) * params.spacing / 2;
+        const sx = fromWorld.x, sy = fromWorld.y;
 
-        // Project all dots onto sweep direction
-        const allProjs = dots.map((dot, idx) => {
+        // Project all dots onto sweep direction + compute perpendicular distance from path
+        const allDots = dots.map((dot, idx) => {
           const wx = dot.col * params.spacing - offsetX;
           const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
-          return { idx, proj: wx * sweepDir.x + wy * sweepDir.y };
+          const proj = (wx - sx) * sweepDir.x + (wy - sy) * sweepDir.y;
+          const perpDist = Math.abs((wx - sx) * sweepDir.y - (wy - sy) * sweepDir.x);
+          return { idx, proj, perpDist };
         });
-        allProjs.sort((a, b) => a.proj - b.proj);
+        allDots.sort((a, b) => a.proj - b.proj);
 
         // Group into lines by projection
         sweepLines = [];
-        let curIndices = [allProjs[0].idx];
-        let curProj = allProjs[0].proj;
-        for (let i = 1; i < allProjs.length; i++) {
-          if (allProjs[i].proj - curProj > params.spacing * 0.5) {
-            sweepLines.push({ proj: curProj, indices: curIndices });
-            curIndices = [];
-            curProj = allProjs[i].proj;
+        let curDots = [{ idx: allDots[0].idx, perpDist: allDots[0].perpDist }];
+        let curProj = allDots[0].proj;
+        for (let i = 1; i < allDots.length; i++) {
+          if (allDots[i].proj - curProj > params.spacing * 0.5) {
+            sweepLines.push({ proj: curProj, dots: curDots });
+            curDots = [];
+            curProj = allDots[i].proj;
           }
-          curIndices.push(allProjs[i].idx);
+          curDots.push({ idx: allDots[i].idx, perpDist: allDots[i].perpDist });
         }
-        sweepLines.push({ proj: curProj, indices: curIndices });
+        sweepLines.push({ proj: curProj, dots: curDots });
         sweepLineIdx = 0;
+        sweepLastProj = sweepLines.length > 0 ? sweepLines[0].proj : 0;
+        sweepLastTime = performance.now();
+        sweepLineDelay = params.lineDelay * 1000;
         return true;
       }
 
-      function updateSweep(worldPos) {
-        if (!sweepDir || !sweepLines) return;
-        const mouseProj = worldPos.x * sweepDir.x + worldPos.y * sweepDir.y;
-        const time = clock.getElapsedTime();
-        while (sweepLineIdx < sweepLines.length && sweepLines[sweepLineIdx].proj <= mouseProj) {
-          sweepLines[sweepLineIdx].indices.forEach(idx => {
-            dots[idx]?.startFlip(time, sweepAxis);
+      function flipLineWithGradient(line, axis) {
+        const g = params.trailGradient;
+        if (g <= 0) {
+          const time = clock.getElapsedTime();
+          line.dots.forEach(d => dots[d.idx]?.startFlip(time, axis));
+        } else {
+          line.dots.forEach(d => {
+            const delay = d.perpDist * g * 1000;
+            pendingTimers.push(setTimeout(() => {
+              dots[d.idx]?.startFlip(clock.getElapsedTime(), axis);
+            }, delay));
           });
+        }
+      }
+
+      function updateSweep(worldPos) {
+        if (!sweepDir || !sweepLines || !sweepStartWorld) return;
+        const mouseProj = (worldPos.x - sweepStartWorld.x) * sweepDir.x
+                        + (worldPos.y - sweepStartWorld.y) * sweepDir.y;
+        const prevIdx = sweepLineIdx;
+        while (sweepLineIdx < sweepLines.length && sweepLines[sweepLineIdx].proj <= mouseProj) {
+          flipLineWithGradient(sweepLines[sweepLineIdx], sweepAxis);
           sweepLineIdx++;
+        }
+        // Update speed measurement when lines were triggered
+        if (sweepLineIdx > prevIdx) {
+          const now = performance.now();
+          const dt = now - sweepLastTime;
+          const linesAdvanced = sweepLineIdx - prevIdx;
+          if (dt > 0 && linesAdvanced > 0) {
+            sweepLineDelay = dt / linesAdvanced;
+          }
+          sweepLastTime = now;
         }
       }
 
@@ -584,15 +624,15 @@
       }
 
       function endTrailDrag() {
-        // Sweep remaining lines with delay
+        // Sweep remaining lines at the same speed the mouse was moving
         if (isDragging && sweepLines && sweepAxis) {
           const remaining = sweepLines.slice(sweepLineIdx);
           const axis = sweepAxis;
+          const delay = Math.max(1, sweepLineDelay); // ms per line from mouse speed
           remaining.forEach((line, i) => {
             pendingTimers.push(setTimeout(() => {
-              const time = clock.getElapsedTime();
-              line.indices.forEach(idx => dots[idx]?.startFlip(time, axis));
-            }, i * params.lineDelay * 1000));
+              flipLineWithGradient(line, axis);
+            }, i * delay));
           });
         }
         isDragging = false;
@@ -601,6 +641,10 @@
         sweepAxis = null;
         sweepLines = null;
         sweepLineIdx = 0;
+        sweepStartWorld = null;
+        sweepLastProj = 0;
+        sweepLastTime = 0;
+        sweepLineDelay = 0;
       }
 
       const canvas = renderer.domElement;
@@ -716,6 +760,7 @@
       animFolder.add(params, 'staggerDelay', 0.001, 0.05, 0.001).name('Stagger Delay');
       animFolder.add(params, 'lineDelay', 0.01, 0.3, 0.01).name('Line Delay');
       animFolder.add(params, 'trailRadius', 0.5, 5.0, 0.1).name('Trail Radius');
+      animFolder.add(params, 'trailGradient', 0, 0.15, 0.005).name('Trail Gradient');
 
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
