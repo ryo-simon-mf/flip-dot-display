@@ -488,7 +488,8 @@
       function resetDots() {
         clearPendingTimers();
         animating = false;
-        mouseTrailMode = false;
+        mouseTrailMode = 'off';
+        btnMouseTrail.textContent = 'Mouse Trail';
         isDragging = false;
         lastMouseWorld = null;
         sweepDir = null;
@@ -505,7 +506,7 @@
       }
 
       // --- Mouse Trail (column sweep) ---
-      let mouseTrailMode = false;
+      let mouseTrailMode = 'off'; // 'off' | 'straight' | 'chevron'
       let isDragging = false;
       let lastMouseWorld = null;
       const _mouseNDC = new THREE.Vector2();
@@ -576,17 +577,16 @@
       }
 
       function flipLineWithGradient(line, axis) {
-        const g = params.trailGradient;
-        if (g <= 0) {
-          const time = clock.getElapsedTime();
-          line.dots.forEach(d => dots[d.idx]?.startFlip(time, axis));
-        } else {
+        if (mouseTrailMode === 'chevron' && params.trailGradient > 0) {
           line.dots.forEach(d => {
-            const delay = d.perpDist * g * 1000;
+            const delay = d.perpDist * params.trailGradient * 1000;
             pendingTimers.push(setTimeout(() => {
               dots[d.idx]?.startFlip(clock.getElapsedTime(), axis);
             }, delay));
           });
+        } else {
+          const time = clock.getElapsedTime();
+          line.dots.forEach(d => dots[d.idx]?.startFlip(time, axis));
         }
       }
 
@@ -649,27 +649,27 @@
 
       const canvas = renderer.domElement;
       canvas.addEventListener('mousedown', (e) => {
-        if (!mouseTrailMode || e.button !== 0) return;
+        if (mouseTrailMode === 'off' || e.button !== 0) return;
         isDragging = true;
         lastMouseWorld = mouseToWorld(e.clientX, e.clientY);
         trailStartWorld = lastMouseWorld?.clone() || null;
       });
       canvas.addEventListener('mousemove', (e) => {
-        if (!mouseTrailMode || !isDragging) return;
+        if (mouseTrailMode === 'off' || !isDragging) return;
         handleTrailMove(e.clientX, e.clientY);
       });
       canvas.addEventListener('mouseup', () => endTrailDrag());
       canvas.addEventListener('mouseleave', () => endTrailDrag());
 
       canvas.addEventListener('touchstart', (e) => {
-        if (!mouseTrailMode) return;
+        if (mouseTrailMode === 'off') return;
         e.preventDefault();
         isDragging = true;
         lastMouseWorld = mouseToWorld(e.touches[0].clientX, e.touches[0].clientY);
         trailStartWorld = lastMouseWorld?.clone() || null;
       }, { passive: false });
       canvas.addEventListener('touchmove', (e) => {
-        if (!mouseTrailMode || !isDragging) return;
+        if (mouseTrailMode === 'off' || !isDragging) return;
         e.preventDefault();
         handleTrailMove(e.touches[0].clientX, e.touches[0].clientY);
       }, { passive: false });
@@ -682,9 +682,13 @@
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
       btnMouseTrail.onclick = () => {
-        mouseTrailMode = !mouseTrailMode;
-        btnMouseTrail.classList.toggle('active', mouseTrailMode);
-        controls.enabled = !mouseTrailMode;
+        const modes = ['off', 'straight', 'chevron'];
+        const labels = { off: 'Mouse Trail', straight: 'Trail: Straight', chevron: 'Trail: Chevron' };
+        const idx = (modes.indexOf(mouseTrailMode) + 1) % modes.length;
+        mouseTrailMode = modes[idx];
+        btnMouseTrail.textContent = labels[mouseTrailMode];
+        btnMouseTrail.classList.toggle('active', mouseTrailMode !== 'off');
+        controls.enabled = mouseTrailMode === 'off';
       };
       document.getElementById('btn-reset').onclick = () => resetDots();
 
