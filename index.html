@@ -64,6 +64,7 @@
     .btn-anim:hover { background: rgba(0,0,0,0.12); }
     .btn-sys { background: rgba(0,0,0,0.06); }
     .btn-sys:hover { background: rgba(0,0,0,0.12); }
+    .btn-anim.active { background: rgba(0,120,255,0.2); border-color: rgba(0,120,255,0.5); color: #0066cc; }
   </style>
 </head>
 <body>
@@ -86,6 +87,7 @@
     <button id="btn-seq-up" class="btn-anim">Up</button>
     <button id="btn-seq-right" class="btn-anim">Right</button>
     <button id="btn-seq-left" class="btn-anim">Left</button>
+    <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: White</button>
@@ -116,6 +118,7 @@
       flipDuration: 0.2,
       staggerDelay: 0.007,
       lineDelay: 0.08,
+      trailRadius: 1.5,
     };
     const CROP_SIZE = 64;
 
@@ -232,6 +235,9 @@
 
     // --- Dot class ---
 
+    const _flipQuat = new THREE.Quaternion();
+    const _rotMat = new THREE.Matrix4();
+
     class FlipDot {
       constructor(group, col, row, frontTex, backTex) {
         this.group = group;
@@ -244,7 +250,13 @@
         this.showingFront = true;
         this.flipping = false;
         this.flipStartTime = 0;
-        this.startRotation = 0;
+        this.startQuat = new THREE.Quaternion();
+        this.targetQuat = new THREE.Quaternion();
+        // Disable auto UV matrix so we can control it for axis correction
+        frontTex.matrixAutoUpdate = false;
+        frontTex.matrix.identity();
+        backTex.matrixAutoUpdate = false;
+        backTex.matrix.identity();
       }
 
       applyMaterial() {
@@ -256,11 +268,13 @@
         }
       }
 
-      startFlip(time) {
+      startFlip(time, axis) {
         if (this.flipping) return;
         this.flipping = true;
         this.flipStartTime = time;
-        this.startRotation = this.showingFront ? 0 : Math.PI;
+        this.startQuat.copy(this.group.quaternion);
+        _flipQuat.setFromAxisAngle(axis, Math.PI);
+        this.targetQuat.copy(this.startQuat).multiply(_flipQuat);
       }
 
       update(time) {
@@ -268,17 +282,41 @@
         const elapsed = time - this.flipStartTime;
         const t = Math.min(elapsed / params.flipDuration, 1);
         const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        this.group.rotation.x = this.startRotation + eased * Math.PI;
+        this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
         if (t >= 1) {
           this.flipping = false;
           this.showingFront = !this.showingFront;
+          this._correctUV();
+        }
+      }
+
+      _correctUV() {
+        _rotMat.makeRotationFromQuaternion(this.group.quaternion);
+        const e = _rotMat.elements;
+        // e[0]=Rxx, e[1]=Ryx, e[4]=Rxy, e[5]=Ryy
+        if (this.showingFront) {
+          // Front UV: u=(x/R+1)/2, v=(y/R+1)/2
+          this.frontTex.matrix.set(
+            e[0],  e[4], (1 - e[0] - e[4]) / 2,
+            e[1],  e[5], (1 - e[1] - e[5]) / 2,
+            0, 0, 1
+          );
+        } else {
+          // Back UV: u=(x/R+1)/2, v=(-y/R+1)/2 → y/R = 1-2v
+          this.backTex.matrix.set(
+            e[0], -e[4], (1 - e[0] + e[4]) / 2,
+            e[1], -e[5], (1 - e[1] + e[5]) / 2,
+            0, 0, 1
+          );
         }
       }
 
       reset() {
         this.flipping = false;
         this.showingFront = true;
-        this.group.rotation.x = 0;
+        this.group.quaternion.identity();
+        this.frontTex.matrix.identity();
+        this.backTex.matrix.identity();
       }
 
       updateTexture(side, img) {
@@ -389,6 +427,10 @@
       setupImageInput('input-back', 'thumb-back', 'back');
 
       // --- Animation ---
+      const AXIS_DOWN  = new THREE.Vector3(1, 0, 0);
+      const AXIS_UP    = new THREE.Vector3(-1, 0, 0);
+      const AXIS_RIGHT = new THREE.Vector3(0, -1, 0);
+      const AXIS_LEFT  = new THREE.Vector3(0, 1, 0);
 
       function triggerRipple() {
         if (animating) return;
@@ -401,9 +443,16 @@
           const db = Math.hypot(dots[b].col - centerCol, dots[b].row - centerRow);
           return da - db;
         });
+        const rippleAxes = indices.map(idx => {
+          const dx = dots[idx].col - centerCol;
+          const dy = -(dots[idx].row - centerRow);
+          const len = Math.hypot(dx, dy) || 1;
+          return new THREE.Vector3(-dy / len, dx / len, 0);
+        });
         const totalTime = indices.length * params.staggerDelay + params.flipDuration;
         indices.forEach((idx, i) => {
-          pendingTimers.push(setTimeout(() => dots[idx]?.startFlip(clock.getElapsedTime()), i * params.staggerDelay * 1000));
+          const axis = rippleAxes[i];
+          pendingTimers.push(setTimeout(() => dots[idx]?.startFlip(clock.getElapsedTime(), axis), i * params.staggerDelay * 1000));
         });
         pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
       }
@@ -411,6 +460,7 @@
       function triggerSequence(direction) {
         if (animating) return;
         animating = true;
+        const axis = { down: AXIS_DOWN, up: AXIS_UP, right: AXIS_RIGHT, left: AXIS_LEFT }[direction];
         const groups = new Map();
         dots.forEach((dot, idx) => {
           let key;
@@ -428,7 +478,7 @@
         sortedKeys.forEach((key, lineIdx) => {
           pendingTimers.push(setTimeout(() => {
             const time = clock.getElapsedTime();
-            groups.get(key).forEach(idx => dots[idx]?.startFlip(time));
+            groups.get(key).forEach(idx => dots[idx]?.startFlip(time, axis));
           }, lineIdx * params.lineDelay * 1000));
         });
         pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
@@ -437,8 +487,149 @@
       function resetDots() {
         clearPendingTimers();
         animating = false;
+        mouseTrailMode = false;
+        isDragging = false;
+        lastMouseWorld = null;
+        sweepDir = null;
+        sweepAxis = null;
+        sweepLines = null;
+        sweepLineIdx = 0;
+        btnMouseTrail.classList.remove('active');
+        controls.enabled = true;
         dots.forEach(dot => dot.reset());
       }
+
+      // --- Mouse Trail (column sweep) ---
+      let mouseTrailMode = false;
+      let isDragging = false;
+      let lastMouseWorld = null;
+      const _mouseNDC = new THREE.Vector2();
+      const _planeZ0 = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const _intersect = new THREE.Vector3();
+      const _raycaster = new THREE.Raycaster();
+      const btnMouseTrail = document.getElementById('btn-mouse-trail');
+
+      // Sweep state
+      let sweepDir = null;      // { x, y } normalized
+      let sweepAxis = null;     // THREE.Vector3 flip axis
+      let sweepLines = null;    // [{ proj, indices[] }] sorted by projection
+      let sweepLineIdx = 0;     // how many lines already triggered
+
+      function mouseToWorld(cx, cy) {
+        _mouseNDC.x = (cx / window.innerWidth) * 2 - 1;
+        _mouseNDC.y = -(cy / window.innerHeight) * 2 + 1;
+        _raycaster.setFromCamera(_mouseNDC, camera);
+        return _raycaster.ray.intersectPlane(_planeZ0, _intersect) ? _intersect.clone() : null;
+      }
+
+      function initSweep(fromWorld, toWorld) {
+        const dx = toWorld.x - fromWorld.x;
+        const dy = toWorld.y - fromWorld.y;
+        const len = Math.hypot(dx, dy);
+        if (len < params.spacing * 0.5) return false;
+
+        sweepDir = { x: dx / len, y: dy / len };
+        sweepAxis = new THREE.Vector3(-sweepDir.y, sweepDir.x, 0);
+
+        const offsetX = (params.cols - 1) * params.spacing / 2;
+        const offsetY = (params.rows - 1) * params.spacing / 2;
+
+        // Project all dots onto sweep direction
+        const allProjs = dots.map((dot, idx) => {
+          const wx = dot.col * params.spacing - offsetX;
+          const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
+          return { idx, proj: wx * sweepDir.x + wy * sweepDir.y };
+        });
+        allProjs.sort((a, b) => a.proj - b.proj);
+
+        // Group into lines by projection
+        sweepLines = [];
+        let curIndices = [allProjs[0].idx];
+        let curProj = allProjs[0].proj;
+        for (let i = 1; i < allProjs.length; i++) {
+          if (allProjs[i].proj - curProj > params.spacing * 0.5) {
+            sweepLines.push({ proj: curProj, indices: curIndices });
+            curIndices = [];
+            curProj = allProjs[i].proj;
+          }
+          curIndices.push(allProjs[i].idx);
+        }
+        sweepLines.push({ proj: curProj, indices: curIndices });
+        sweepLineIdx = 0;
+        return true;
+      }
+
+      function updateSweep(worldPos) {
+        if (!sweepDir || !sweepLines) return;
+        const mouseProj = worldPos.x * sweepDir.x + worldPos.y * sweepDir.y;
+        const time = clock.getElapsedTime();
+        while (sweepLineIdx < sweepLines.length && sweepLines[sweepLineIdx].proj <= mouseProj) {
+          sweepLines[sweepLineIdx].indices.forEach(idx => {
+            dots[idx]?.startFlip(time, sweepAxis);
+          });
+          sweepLineIdx++;
+        }
+      }
+
+      function handleTrailMove(cx, cy) {
+        const cur = mouseToWorld(cx, cy);
+        if (!cur) return;
+        if (!sweepDir && lastMouseWorld) {
+          initSweep(lastMouseWorld, cur);
+        }
+        if (sweepDir) {
+          updateSweep(cur);
+        }
+        lastMouseWorld = cur;
+      }
+
+      function endTrailDrag() {
+        // Sweep remaining lines with delay
+        if (isDragging && sweepLines && sweepAxis) {
+          const remaining = sweepLines.slice(sweepLineIdx);
+          const axis = sweepAxis;
+          remaining.forEach((line, i) => {
+            pendingTimers.push(setTimeout(() => {
+              const time = clock.getElapsedTime();
+              line.indices.forEach(idx => dots[idx]?.startFlip(time, axis));
+            }, i * params.lineDelay * 1000));
+          });
+        }
+        isDragging = false;
+        lastMouseWorld = null;
+        sweepDir = null;
+        sweepAxis = null;
+        sweepLines = null;
+        sweepLineIdx = 0;
+      }
+
+      const canvas = renderer.domElement;
+      canvas.addEventListener('mousedown', (e) => {
+        if (!mouseTrailMode || e.button !== 0) return;
+        isDragging = true;
+        lastMouseWorld = mouseToWorld(e.clientX, e.clientY);
+        trailStartWorld = lastMouseWorld?.clone() || null;
+      });
+      canvas.addEventListener('mousemove', (e) => {
+        if (!mouseTrailMode || !isDragging) return;
+        handleTrailMove(e.clientX, e.clientY);
+      });
+      canvas.addEventListener('mouseup', () => endTrailDrag());
+      canvas.addEventListener('mouseleave', () => endTrailDrag());
+
+      canvas.addEventListener('touchstart', (e) => {
+        if (!mouseTrailMode) return;
+        e.preventDefault();
+        isDragging = true;
+        lastMouseWorld = mouseToWorld(e.touches[0].clientX, e.touches[0].clientY);
+        trailStartWorld = lastMouseWorld?.clone() || null;
+      }, { passive: false });
+      canvas.addEventListener('touchmove', (e) => {
+        if (!mouseTrailMode || !isDragging) return;
+        e.preventDefault();
+        handleTrailMove(e.touches[0].clientX, e.touches[0].clientY);
+      }, { passive: false });
+      canvas.addEventListener('touchend', () => endTrailDrag());
 
       // --- UI ---
       document.getElementById('btn-ripple').onclick = () => triggerRipple();
@@ -446,6 +637,11 @@
       document.getElementById('btn-seq-up').onclick = () => triggerSequence('up');
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
+      btnMouseTrail.onclick = () => {
+        mouseTrailMode = !mouseTrailMode;
+        btnMouseTrail.classList.toggle('active', mouseTrailMode);
+        controls.enabled = !mouseTrailMode;
+      };
       document.getElementById('btn-reset').onclick = () => resetDots();
 
       const btnGlossy = document.getElementById('btn-glossy');
@@ -482,6 +678,11 @@
           labels.forEach(l => l.style.color = 'rgba(0,0,0,0.6)');
           thumbs.forEach(t => t.style.borderColor = 'rgba(0,0,0,0.2)');
         }
+        if (btnMouseTrail.classList.contains('active')) {
+          btnMouseTrail.style.background = 'rgba(0,120,255,0.2)';
+          btnMouseTrail.style.borderColor = 'rgba(0,120,255,0.5)';
+          btnMouseTrail.style.color = bg.dark ? '#66aaff' : '#0066cc';
+        }
       }
 
       btnBg.onclick = () => {
@@ -514,11 +715,12 @@
       animFolder.add(params, 'flipDuration', 0.05, 1.0, 0.01).name('Flip Duration');
       animFolder.add(params, 'staggerDelay', 0.001, 0.05, 0.001).name('Stagger Delay');
       animFolder.add(params, 'lineDelay', 0.01, 0.3, 0.01).name('Line Delay');
+      animFolder.add(params, 'trailRadius', 0.5, 5.0, 0.1).name('Trail Radius');
 
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = 'A: toggle GUI  |  D: toggle UI';
+      hint.textContent = 'A: GUI  |  D: UI  |  M: Mouse Trail';
       gui.domElement.appendChild(hint);
 
       // --- Keyboard toggles ---
@@ -527,6 +729,9 @@
       window.addEventListener('keydown', (e) => {
         if (e.key === 'a' || e.key === 'A') {
           gui.domElement.style.display = gui.domElement.style.display === 'none' ? '' : 'none';
+        }
+        if (e.key === 'm' || e.key === 'M') {
+          btnMouseTrail.click();
         }
         if (e.key === 'd' || e.key === 'D') {
           const hidden = topUi.style.display === 'none';
