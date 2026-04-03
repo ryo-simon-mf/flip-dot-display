@@ -426,7 +426,7 @@
         const sortedKeys = [...groups.keys()].sort((a, b) => a - b);
         const totalTime = sortedKeys.length * params.lineDelay + params.flipDuration;
         sortedKeys.forEach((key, lineIdx) => {
-          setTimeout(() => {
+          pendingTimers.push(setTimeout(() => {
             const time = clock.getElapsedTime();
             groups.get(key).forEach(idx => dots[idx]?.startFlip(time));
           }, lineIdx * params.lineDelay * 1000));
@@ -559,7 +559,11 @@
       animate();
     }
 
-    init();
+    init().catch(e => {
+      console.error('init failed:', e);
+      document.body.insertAdjacentHTML('afterbegin',
+        `<pre style="color:red;padding:20px;font:14px monospace;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999;background:#fff;border:2px solid red;max-width:80%">${e.message}\n${e.stack}</pre>`);
+    });
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
