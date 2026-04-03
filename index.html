@@ -295,7 +295,7 @@
 
     // --- Main ---
     async function init() {
-      const [img1, img2] = await Promise.all([
+      let [img1, img2] = await Promise.all([
         loadImage('images/image1.png'),
         loadImage('images/image2.png')
       ]);
@@ -306,12 +306,26 @@
       document.getElementById('thumb-back').classList.remove('empty');
 
       let dots = [];
+      let animating = false;
+      let pendingTimers = [];
+
+      function clearPendingTimers() {
+        pendingTimers.forEach(id => clearTimeout(id));
+        pendingTimers = [];
+      }
 
       function buildDots() {
-        // Remove existing dots
-        dots.forEach(d => { scene.remove(d.group); });
+        clearPendingTimers();
+        // Dispose old materials and textures
+        dots.forEach(d => {
+          if (d.frontMat) { d.frontMat.map?.dispose(); d.frontMat.dispose(); }
+          if (d.backMat) { d.backMat.map?.dispose(); d.backMat.dispose(); }
+          scene.remove(d.group);
+        });
         dots = [];
+        animating = false;
 
+        if (stoneGeo) stoneGeo.dispose();
         stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
 
         const offsetX = (params.cols - 1) * params.spacing / 2;
@@ -362,6 +376,8 @@
           thumb.classList.remove('empty');
           const img = new Image();
           img.onload = () => {
+            if (side === 'front') img1 = img;
+            else img2 = img;
             dots.forEach(dot => dot.updateTexture(side, img));
             URL.revokeObjectURL(url);
           };
@@ -373,13 +389,12 @@
       setupImageInput('input-back', 'thumb-back', 'back');
 
       // --- Animation ---
-      let animating = false;
 
       function triggerRipple() {
         if (animating) return;
         animating = true;
-        const centerCol = (COLS - 1) / 2;
-        const centerRow = (ROWS - 1) / 2;
+        const centerCol = (params.cols - 1) / 2;
+        const centerRow = (params.rows - 1) / 2;
         const indices = dots.map((_, i) => i);
         indices.sort((a, b) => {
           const da = Math.hypot(dots[a].col - centerCol, dots[a].row - centerRow);
@@ -388,9 +403,9 @@
         });
         const totalTime = indices.length * params.staggerDelay + params.flipDuration;
         indices.forEach((idx, i) => {
-          setTimeout(() => dots[idx].startFlip(clock.getElapsedTime()), i * params.staggerDelay * 1000);
+          pendingTimers.push(setTimeout(() => dots[idx]?.startFlip(clock.getElapsedTime()), i * params.staggerDelay * 1000));
         });
-        setTimeout(() => { animating = false; }, totalTime * 1000);
+        pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
       }
 
       function triggerSequence(direction) {
@@ -413,13 +428,14 @@
         sortedKeys.forEach((key, lineIdx) => {
           setTimeout(() => {
             const time = clock.getElapsedTime();
-            groups.get(key).forEach(idx => dots[idx].startFlip(time));
-          }, lineIdx * params.lineDelay * 1000);
+            groups.get(key).forEach(idx => dots[idx]?.startFlip(time));
+          }, lineIdx * params.lineDelay * 1000));
         });
-        setTimeout(() => { animating = false; }, totalTime * 1000);
+        pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
       }
 
       function resetDots() {
+        clearPendingTimers();
         animating = false;
         dots.forEach(dot => dot.reset());
       }
