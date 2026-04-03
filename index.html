@@ -275,7 +275,7 @@
         this.flipStartTime = time;
         this.startQuat.copy(this.group.quaternion);
         _flipQuat.setFromAxisAngle(axis, Math.PI);
-        this.targetQuat.copy(this.startQuat).multiply(_flipQuat);
+        this.targetQuat.copy(_flipQuat).multiply(this.startQuat);
       }
 
       update(time) {
