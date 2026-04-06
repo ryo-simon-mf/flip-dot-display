@@ -91,6 +91,7 @@
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
     <button id="btn-shape" class="btn-sys">Shape: Round</button>
+    <button id="btn-gap" class="btn-sys">Gap: On</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: White</button>
   </div>
@@ -123,6 +124,7 @@
       trailRadius: 1.5,
       trailGradient: 0.03,
       dotShape: 'round',
+      dotGap: true,
     };
     const CROP_SIZE = 64;
 
@@ -199,8 +201,9 @@
     const W_SEGS = 32;
     const H_SEGS = 32;
 
-    function buildStoneGeo(radius, squash) {
-      const geo = new THREE.SphereGeometry(radius, W_SEGS, H_SEGS);
+    function buildStoneGeo(radius, squash, gap) {
+      const r = gap ? radius : radius * 1.08;
+      const geo = new THREE.SphereGeometry(r, W_SEGS, H_SEGS);
       const pos = geo.attributes.position;
       const uvs = geo.attributes.uv;
 
@@ -216,11 +219,11 @@
         const x = pos.getX(i);
         const y = pos.getY(i);
         const z = pos.getZ(i);
-        const u = (x / radius + 1) / 2;
+        const u = (x / r + 1) / 2;
         if (z >= 0) {
-          uvs.setXY(i, u, (y / radius + 1) / 2);
+          uvs.setXY(i, u, (y / r + 1) / 2);
         } else {
-          uvs.setXY(i, u, 1 - (y / radius + 1) / 2);
+          uvs.setXY(i, u, 1 - (y / r + 1) / 2);
         }
       }
       uvs.needsUpdate = true;
@@ -235,8 +238,8 @@
       return geo;
     }
 
-    function buildBoxGeo(size, squash) {
-      const s = size * 2 * 0.92;
+    function buildBoxGeo(size, squash, gap) {
+      const s = size * 2 * (gap ? 0.92 : 1.0);
       const geo = new THREE.BoxGeometry(s, s, size * 2 * squash);
       // Remap back face (-Z) UVs to match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
       // BoxGeometry: 4 verts per face, back face = vertices 20-23
@@ -401,8 +404,8 @@
         if (stoneGeo) stoneGeo.dispose();
         const isBox = params.dotShape === 'square';
         stoneGeo = isBox
-          ? buildBoxGeo(params.spacing / 2, params.squash)
-          : buildStoneGeo(params.spacing / 2, params.squash);
+          ? buildBoxGeo(params.spacing / 2, params.squash, params.dotGap)
+          : buildStoneGeo(params.spacing / 2, params.squash, params.dotGap);
 
         if (sideMat) sideMat.dispose();
         sideMat = isBox
@@ -794,6 +797,13 @@
       btnShape.onclick = () => {
         params.dotShape = params.dotShape === 'round' ? 'square' : 'round';
         btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+        buildDots();
+      };
+
+      const btnGap = document.getElementById('btn-gap');
+      btnGap.onclick = () => {
+        params.dotGap = !params.dotGap;
+        btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
         buildDots();
       };
 
