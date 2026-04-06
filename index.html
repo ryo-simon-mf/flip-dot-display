@@ -236,9 +236,18 @@
     }
 
     function buildBoxGeo(size, squash) {
-      const geo = new THREE.BoxGeometry(size * 2 * 0.92, size * 2 * 0.92, size * 2 * squash);
-      // BoxGeometry groups: 0=+X,1=-X,2=+Y,3=-Y (sides), 4=+Z (front), 5=-Z (back)
-      // Each face = 6 indices. Remap to: front=mat0, back=mat1, sides=mat2
+      const s = size * 2 * 0.92;
+      const geo = new THREE.BoxGeometry(s, s, size * 2 * squash);
+      // Remap back face (-Z) UVs to match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
+      // BoxGeometry: 4 verts per face, back face = vertices 20-23
+      const uvs = geo.attributes.uv;
+      const pos = geo.attributes.position;
+      const R = s / 2;
+      for (let i = 20; i < 24; i++) {
+        uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
+      }
+      uvs.needsUpdate = true;
+      // Groups: 0=+X,1=-X,2=+Y,3=-Y (sides), 4=+Z (front), 5=-Z (back)
       geo.clearGroups();
       geo.addGroup(0, 24, 2);   // 4 side faces → material 2
       geo.addGroup(24, 6, 0);   // +Z front → material 0
