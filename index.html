@@ -65,6 +65,36 @@
     .btn-sys { background: rgba(0,0,0,0.06); }
     .btn-sys:hover { background: rgba(0,0,0,0.12); }
     .btn-anim.active { background: rgba(0,120,255,0.2); border-color: rgba(0,120,255,0.5); color: #0066cc; }
+
+    #help-btn {
+      position: fixed; bottom: 20px; left: 20px; z-index: 20;
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.2); background: rgba(0,0,0,0.06);
+      color: #333; font-size: 18px; font-weight: bold; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(10px); transition: background 0.2s;
+    }
+    #help-btn:hover { background: rgba(0,0,0,0.12); }
+
+    #help-overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    #help-overlay.visible { display: flex; }
+    #help-content {
+      background: #1a1a1a; color: #e0e0e0; border-radius: 12px;
+      padding: 32px 36px; max-width: 640px; max-height: 80vh; overflow-y: auto;
+      font-size: 13px; line-height: 1.7; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    #help-content h2 { font-size: 18px; margin: 0 0 16px; color: #fff; }
+    #help-content h3 { font-size: 14px; margin: 18px 0 8px; color: #88bbff; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    #help-content table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+    #help-content td { padding: 3px 8px; vertical-align: top; }
+    #help-content td:first-child { white-space: nowrap; font-weight: 600; color: #ccc; width: 140px; }
+    #help-content kbd { background: #333; padding: 2px 6px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+    #help-close { float: right; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; margin: -8px -8px 0 0; }
+    #help-close:hover { color: #fff; }
   </style>
 </head>
 <body>
@@ -95,6 +125,68 @@
     <button id="btn-gap" class="btn-sys">Gap: On</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: White</button>
+  </div>
+
+  <button id="help-btn" title="Help">?</button>
+  <div id="help-overlay">
+    <div id="help-content">
+      <button id="help-close">&times;</button>
+      <h2>3D Flip-Dot Display - Help</h2>
+
+      <h3>Keyboard Shortcuts</h3>
+      <table>
+        <tr><td><kbd>A</kbd></td><td>Toggle GUI parameter panel</td></tr>
+        <tr><td><kbd>D</kbd></td><td>Toggle UI (buttons &amp; image inputs)</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Cycle Mouse Trail mode (Off / Straight / Chevron)</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+      </table>
+
+      <h3>Animation Buttons</h3>
+      <table>
+        <tr><td>Ripple</td><td>Center-outward ripple flip</td></tr>
+        <tr><td>Down / Up</td><td>Row-by-row flip (top-down / bottom-up)</td></tr>
+        <tr><td>Right / Left</td><td>Column-by-column flip</td></tr>
+        <tr><td>Wind</td><td>Random direction sweep with turbulence</td></tr>
+        <tr><td>Click Ripple</td><td>Toggle mode: click anywhere to ripple from that point</td></tr>
+        <tr><td>Mouse Trail</td><td>Toggle drag-to-flip: Straight (column sweep) or Chevron (V-wave)</td></tr>
+      </table>
+
+      <h3>Control Buttons</h3>
+      <table>
+        <tr><td>Reset</td><td>Reset all dots to front face, cancel animations</td></tr>
+        <tr><td>Shape</td><td>Toggle dot shape: Round (spheroid) / Square (box)</td></tr>
+        <tr><td>Gap</td><td>Toggle gap between dots: On (spaced) / Off (tight)</td></tr>
+        <tr><td>Glossy</td><td>Toggle surface finish: Matte / Glossy</td></tr>
+        <tr><td>BG</td><td>Cycle background color: White / Black / Gray</td></tr>
+      </table>
+
+      <h3>GUI Parameters (Panel)</h3>
+      <table>
+        <tr><td>FPS</td><td>Current frames per second</td></tr>
+        <tr><td>Columns</td><td>Number of dots horizontally (4-96)</td></tr>
+        <tr><td>Rows</td><td>Number of dots vertically (4-54)</td></tr>
+        <tr><td>Spacing</td><td>Distance between dot centers</td></tr>
+        <tr><td>Squash</td><td>Dot thickness (0.1=flat, 1.0=sphere)</td></tr>
+        <tr><td>Roughness</td><td>Surface roughness (0=mirror, 1=matte)</td></tr>
+        <tr><td>Metalness</td><td>Metallic appearance (keep low to preserve colors)</td></tr>
+        <tr><td>Flip Duration</td><td>Time for a single dot flip (seconds)</td></tr>
+        <tr><td>Stagger Delay</td><td>Delay between dots in Ripple/Click Ripple</td></tr>
+        <tr><td>Line Delay</td><td>Delay between lines in directional animations</td></tr>
+        <tr><td>Trail Radius</td><td>Mouse Trail: cursor influence radius</td></tr>
+        <tr><td>Trail Gradient</td><td>Chevron mode: V-wave spread (0=straight)</td></tr>
+      </table>
+
+      <h3>Image Input</h3>
+      <table>
+        <tr><td>Front / Back</td><td>Click thumbnails at top to upload custom images</td></tr>
+      </table>
+
+      <h3>Camera</h3>
+      <table>
+        <tr><td>Drag</td><td>Orbit camera (disabled during Click Ripple / Mouse Trail)</td></tr>
+        <tr><td>Scroll</td><td>Zoom in/out</td></tr>
+      </table>
+    </div>
   </div>
 
   <script type="importmap">
@@ -947,13 +1039,23 @@
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = 'A: GUI  |  D: UI  |  M: Mouse Trail';
+      hint.textContent = 'A: GUI | D: UI | M: Trail | ?: Help';
       gui.domElement.appendChild(hint);
+
+      // --- Help ---
+      const helpOverlay = document.getElementById('help-overlay');
+      const helpBtn = document.getElementById('help-btn');
+      const helpClose = document.getElementById('help-close');
+      function toggleHelp() { helpOverlay.classList.toggle('visible'); }
+      helpBtn.onclick = toggleHelp;
+      helpClose.onclick = toggleHelp;
+      helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) toggleHelp(); });
 
       // --- Keyboard toggles ---
       const topUi = document.getElementById('top-ui');
       const bottomUi = document.getElementById('ui');
       window.addEventListener('keydown', (e) => {
+        if (e.key === '?') { toggleHelp(); return; }
         if (e.key === 'a' || e.key === 'A') {
           gui.domElement.style.display = gui.domElement.style.display === 'none' ? '' : 'none';
         }
