@@ -88,6 +88,7 @@
     <button id="btn-seq-right" class="btn-anim">Right</button>
     <button id="btn-seq-left" class="btn-anim">Left</button>
     <button id="btn-wind" class="btn-anim">Wind</button>
+    <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
     <button id="btn-shape" class="btn-sys">Shape: Round</button>
@@ -531,6 +532,37 @@
         pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
       }
 
+      // --- Click Ripple ---
+      let clickRippleMode = false;
+      const btnClickRipple = document.getElementById('btn-click-ripple');
+
+      function triggerClickRipple(worldPos) {
+        const offsetX = (params.cols - 1) * params.spacing / 2;
+        const offsetY = (params.rows - 1) * params.spacing / 2;
+
+        // Sort dots by distance from click point
+        const sorted = dots.map((dot, idx) => {
+          const wx = dot.col * params.spacing - offsetX;
+          const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
+          const dist = Math.hypot(worldPos.x - wx, worldPos.y - wy);
+          return { idx, dist, wx, wy };
+        });
+        sorted.sort((a, b) => a.dist - b.dist);
+
+        const totalTime = sorted.length * params.staggerDelay + params.flipDuration;
+        sorted.forEach(({ idx, dist, wx, wy }, i) => {
+          // Flip axis: perpendicular to direction from click to dot (outer edge tilts forward)
+          const dx = wx - worldPos.x;
+          const dy = wy - worldPos.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const axis = new THREE.Vector3(-dy / len, dx / len, 0);
+          pendingTimers.push(setTimeout(() => {
+            dots[idx]?.startFlip(clock.getElapsedTime(), axis);
+          }, i * params.staggerDelay * 1000));
+        });
+        pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
+      }
+
       function triggerWind() {
         if (animating) return;
         animating = true;
@@ -590,6 +622,8 @@
         animating = false;
         mouseTrailMode = 'off';
         btnMouseTrail.textContent = 'Mouse Trail';
+        clickRippleMode = false;
+        btnClickRipple.classList.remove('active');
         isDragging = false;
         lastMouseWorld = null;
         sweepDir = null;
@@ -748,6 +782,14 @@
       }
 
       const canvas = renderer.domElement;
+      canvas.addEventListener('click', (e) => {
+        if (!clickRippleMode || e.button !== 0) return;
+        const worldPos = mouseToWorld(e.clientX, e.clientY);
+        if (!worldPos) return;
+        if (animating) return;
+        animating = true;
+        triggerClickRipple(worldPos);
+      });
       canvas.addEventListener('mousedown', (e) => {
         if (mouseTrailMode === 'off' || e.button !== 0) return;
         isDragging = true;
@@ -762,6 +804,12 @@
       canvas.addEventListener('mouseleave', () => endTrailDrag());
 
       canvas.addEventListener('touchstart', (e) => {
+        if (clickRippleMode && !animating) {
+          e.preventDefault();
+          const worldPos = mouseToWorld(e.touches[0].clientX, e.touches[0].clientY);
+          if (worldPos) { animating = true; triggerClickRipple(worldPos); }
+          return;
+        }
         if (mouseTrailMode === 'off') return;
         e.preventDefault();
         isDragging = true;
@@ -782,6 +830,17 @@
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
       document.getElementById('btn-wind').onclick = () => triggerWind();
+      btnClickRipple.onclick = () => {
+        clickRippleMode = !clickRippleMode;
+        btnClickRipple.classList.toggle('active', clickRippleMode);
+        // Disable other interactive modes when enabling
+        if (clickRippleMode && mouseTrailMode !== 'off') {
+          mouseTrailMode = 'off';
+          btnMouseTrail.textContent = 'Mouse Trail';
+          btnMouseTrail.classList.remove('active');
+        }
+        controls.enabled = !clickRippleMode;
+      };
       btnMouseTrail.onclick = () => {
         const modes = ['off', 'straight', 'chevron'];
         const labels = { off: 'Mouse Trail', straight: 'Trail: Straight', chevron: 'Trail: Chevron' };
@@ -790,6 +849,10 @@
         btnMouseTrail.textContent = labels[mouseTrailMode];
         btnMouseTrail.classList.toggle('active', mouseTrailMode !== 'off');
         controls.enabled = mouseTrailMode === 'off';
+        if (mouseTrailMode !== 'off' && clickRippleMode) {
+          clickRippleMode = false;
+          btnClickRipple.classList.remove('active');
+        }
       };
       document.getElementById('btn-reset').onclick = () => resetDots();
 
