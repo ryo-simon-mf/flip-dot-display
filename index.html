@@ -261,6 +261,7 @@
     // --- Dot class ---
 
     const _flipQuat = new THREE.Quaternion();
+    const _snapAxis = new THREE.Vector3();
     const _rotMat = new THREE.Matrix4();
 
     class FlipDot {
@@ -298,7 +299,16 @@
         this.flipping = true;
         this.flipStartTime = time;
         this.startQuat.copy(this.group.quaternion);
-        _flipQuat.setFromAxisAngle(axis, Math.PI);
+        // Square dots: snap to nearest cardinal axis to keep grid aligned
+        let flipAxis = axis;
+        if (params.dotShape === 'square') {
+          if (Math.abs(axis.x) >= Math.abs(axis.y)) {
+            flipAxis = _snapAxis.set(axis.x >= 0 ? 1 : -1, 0, 0);
+          } else {
+            flipAxis = _snapAxis.set(0, axis.y >= 0 ? 1 : -1, 0);
+          }
+        }
+        _flipQuat.setFromAxisAngle(flipAxis, Math.PI);
         this.targetQuat.copy(_flipQuat).multiply(this.startQuat);
       }
 
