@@ -412,11 +412,11 @@
           sideMat.roughness = params.roughness;
           sideMat.metalness = params.metalness;
           if (params.trueColor) {
-            sideMat.emissive.setHex(0x222222);
+            sideMat.emissive.setHex(0xffffff);
             sideMat.color.setHex(0x000000);
           } else {
             sideMat.emissive.setHex(0x000000);
-            sideMat.color.setHex(0x222222);
+            sideMat.color.setHex(0xffffff);
           }
         }
       }
@@ -533,7 +533,7 @@
 
         if (sideMat) sideMat.dispose();
         sideMat = isBox
-          ? new THREE.MeshStandardMaterial({ color: 0x222222, roughness: params.roughness, metalness: params.metalness })
+          ? new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: params.roughness, metalness: params.metalness })
           : null;
 
         const offsetX = (params.cols - 1) * params.spacing / 2;
