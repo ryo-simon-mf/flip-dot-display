@@ -125,6 +125,7 @@
     <button id="btn-gap" class="btn-sys">Gap: On</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: White</button>
+    <button id="btn-fit" class="btn-sys">Fit</button>
   </div>
 
   <button id="help-btn" title="Help">?</button>
@@ -138,6 +139,7 @@
         <tr><td><kbd>A</kbd></td><td>Toggle GUI parameter panel</td></tr>
         <tr><td><kbd>D</kbd></td><td>Toggle UI (buttons &amp; image inputs)</td></tr>
         <tr><td><kbd>M</kbd></td><td>Cycle Mouse Trail mode (Off / Straight / Chevron)</td></tr>
+        <tr><td><kbd>F</kbd></td><td>Fit camera to fill window with dots</td></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
       </table>
 
@@ -158,6 +160,7 @@
         <tr><td>Gap</td><td>Toggle gap between dots: On (spaced) / Off (tight)</td></tr>
         <tr><td>Glossy</td><td>Toggle surface finish: Matte / Glossy</td></tr>
         <tr><td>BG</td><td>Cycle background color: White / Black / Gray</td></tr>
+        <tr><td>Fit</td><td>Auto-fit camera so dots fill the window</td></tr>
       </table>
 
       <h3>GUI Parameters (Panel)</h3>
@@ -1008,6 +1011,20 @@
         applyBgTheme(bgColors[bgIdx]);
       };
 
+      document.getElementById('btn-fit').onclick = () => {
+        const gridW = (params.cols - 1) * params.spacing;
+        const gridH = (params.rows - 1) * params.spacing;
+        const fovRad = camera.fov * Math.PI / 180;
+        const aspect = camera.aspect;
+        // Distance to fit height and width, pick the larger
+        const dH = (gridH / 2) / Math.tan(fovRad / 2);
+        const dW = (gridW / 2) / (Math.tan(fovRad / 2) * aspect);
+        const d = Math.max(dH, dW) * 1.05; // 5% margin
+        camera.position.set(0, 0, d);
+        controls.target.set(0, 0, 0);
+        controls.update();
+      };
+
       // --- GUI ---
       const gui = new GUI({ title: 'Parameters' });
 
@@ -1039,7 +1056,7 @@
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = 'A: GUI | D: UI | M: Trail | ?: Help';
+      hint.textContent = 'A:GUI D:UI M:Trail F:Fit ?:Help';
       gui.domElement.appendChild(hint);
 
       // --- Help ---
@@ -1056,6 +1073,9 @@
       const bottomUi = document.getElementById('ui');
       window.addEventListener('keydown', (e) => {
         if (e.key === '?') { toggleHelp(); return; }
+        if (e.key === 'f' || e.key === 'F') {
+          document.getElementById('btn-fit').click();
+        }
         if (e.key === 'a' || e.key === 'A') {
           gui.domElement.style.display = gui.domElement.style.display === 'none' ? '' : 'none';
         }
