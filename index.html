@@ -445,32 +445,27 @@
         const t = Math.min(elapsed / params.flipDuration, 1);
         const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
+        this._correctUV();
         if (t >= 1) {
           this.flipping = false;
           this.showingFront = !this.showingFront;
-          this._correctUV();
         }
       }
 
       _correctUV() {
         _rotMat.makeRotationFromQuaternion(this.group.quaternion);
         const e = _rotMat.elements;
-        // e[0]=Rxx, e[1]=Ryx, e[4]=Rxy, e[5]=Ryy
-        if (this.showingFront) {
-          // Front UV: u=(x/R+1)/2, v=(y/R+1)/2
-          this.frontTex.matrix.set(
-            e[0],  e[4], (1 - e[0] - e[4]) / 2,
-            e[1],  e[5], (1 - e[1] - e[5]) / 2,
-            0, 0, 1
-          );
-        } else {
-          // Back UV: u=(x/R+1)/2, v=(-y/R+1)/2 → y/R = 1-2v
-          this.backTex.matrix.set(
-            e[0], -e[4], (1 - e[0] + e[4]) / 2,
-            e[1], -e[5], (1 - e[1] + e[5]) / 2,
-            0, 0, 1
-          );
-        }
+        // Update both faces every frame so texture tracks rotation
+        this.frontTex.matrix.set(
+          e[0],  e[4], (1 - e[0] - e[4]) / 2,
+          e[1],  e[5], (1 - e[1] - e[5]) / 2,
+          0, 0, 1
+        );
+        this.backTex.matrix.set(
+          e[0], -e[4], (1 - e[0] + e[4]) / 2,
+          e[1], -e[5], (1 - e[1] + e[5]) / 2,
+          0, 0, 1
+        );
       }
 
       reset() {
