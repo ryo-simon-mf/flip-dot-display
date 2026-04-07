@@ -118,6 +118,7 @@
     <button id="btn-seq-right" class="btn-anim">Right</button>
     <button id="btn-seq-left" class="btn-anim">Left</button>
     <button id="btn-wind" class="btn-anim">Wind</button>
+    <button id="btn-natural-wind" class="btn-anim">Natural Wind</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
@@ -150,6 +151,7 @@
         <tr><td>Down / Up</td><td>Row-by-row flip (top-down / bottom-up)</td></tr>
         <tr><td>Right / Left</td><td>Column-by-column flip</td></tr>
         <tr><td>Wind</td><td>Random direction sweep with turbulence</td></tr>
+        <tr><td>Natural Wind</td><td>Multi-gust organic wind with irregular wavefront</td></tr>
         <tr><td>Click Ripple</td><td>Toggle mode: click anywhere to ripple from that point</td></tr>
         <tr><td>Mouse Trail</td><td>Toggle drag-to-flip: Straight (column sweep) or Chevron (V-wave)</td></tr>
       </table>
@@ -736,6 +738,83 @@
         pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 1000));
       }
 
+      function triggerNaturalWind() {
+        if (animating) return;
+        animating = true;
+
+        const angle = Math.random() * Math.PI * 2;
+        const windX = Math.cos(angle);
+        const windY = Math.sin(angle);
+        const flipAxis = new THREE.Vector3(-windY, windX, 0);
+
+        const offsetX = (params.cols - 1) * params.spacing / 2;
+        const offsetY = (params.rows - 1) * params.spacing / 2;
+
+        // Inline 2D value noise (no library needed)
+        function hash(x, y) {
+          let h = (x | 0) * 374761393 + (y | 0) * 668265263;
+          h = (h ^ (h >> 13)) * 1274126177;
+          return ((h ^ (h >> 16)) & 0x7fffffff) / 0x7fffffff;
+        }
+        function smoothstep(t) { return t * t * (3 - 2 * t); }
+        function valueNoise(px, py) {
+          const ix = Math.floor(px), iy = Math.floor(py);
+          const fx = smoothstep(px - ix), fy = smoothstep(py - iy);
+          const a = hash(ix, iy), b = hash(ix + 1, iy);
+          const c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+          return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+        }
+        function fractalNoise(px, py, seed) {
+          return valueNoise(px + seed, py + seed) * 0.7
+               + valueNoise(px * 2 + seed + 100, py * 2 + seed + 100) * 0.3;
+        }
+
+        // Gust configuration: 2-4 gusts with varying strength
+        const gustCount = 2 + Math.floor(Math.random() * 3);
+        const baseGustGap = (params.cols + params.rows) * params.lineDelay * 0.5;
+        const gusts = [];
+        for (let g = 0; g < gustCount; g++) {
+          gusts.push({
+            delay: g * baseGustGap * (0.6 + Math.random() * 0.8),
+            strength: g === gustCount - 1 ? 1.5 : 0.3 + Math.random() * 0.4,
+            noiseScale: 0.15 + Math.random() * 0.15,
+            noiseSeed: Math.random() * 1000,
+          });
+        }
+
+        // Per-dot: project onto wind, assign resistance, find first gust that flips it
+        const dotData = dots.map((dot, idx) => {
+          const wx = dot.col * params.spacing - offsetX;
+          const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
+          return { idx, wx, wy, proj: wx * windX + wy * windY, resistance: Math.random() };
+        });
+
+        const projMin = Math.min(...dotData.map(d => d.proj));
+        const projRange = (Math.max(...dotData.map(d => d.proj)) - projMin) || 1;
+        const sweepTime = Math.max(params.cols, params.rows) * params.lineDelay;
+        let maxDelay = 0;
+
+        dotData.forEach(d => {
+          const normProj = (d.proj - projMin) / projRange;
+          for (const gust of gusts) {
+            const noiseVal = fractalNoise(d.wx * gust.noiseScale, d.wy * gust.noiseScale, gust.noiseSeed);
+            if (gust.strength - noiseVal * 0.4 > d.resistance * 0.8) {
+              const delay = gust.delay * 1000
+                + normProj * sweepTime * 1000
+                + noiseVal * params.lineDelay * 6000
+                + Math.random() * params.lineDelay * 2000;
+              if (delay > maxDelay) maxDelay = delay;
+              pendingTimers.push(setTimeout(() => {
+                dots[d.idx]?.startFlip(clock.getElapsedTime(), flipAxis);
+              }, delay));
+              break;
+            }
+          }
+        });
+
+        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 1000));
+      }
+
       function resetDots() {
         clearPendingTimers();
         animating = false;
@@ -949,6 +1028,7 @@
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
       document.getElementById('btn-wind').onclick = () => triggerWind();
+      document.getElementById('btn-natural-wind').onclick = () => triggerNaturalWind();
       btnClickRipple.onclick = () => {
         clickRippleMode = !clickRippleMode;
         btnClickRipple.classList.toggle('active', clickRippleMode);
