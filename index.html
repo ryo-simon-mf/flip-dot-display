@@ -210,22 +210,22 @@
 
     // --- Config (mutable via GUI) ---
     const params = {
-      cols: 48,
-      rows: 27,
+      cols: 16,
+      rows: 9,
       spacing: 1.0,
-      squash: 0.5,
+      squash: 0.1,
       roughness: 0.3,
       metalness: 0.1,
-      flipDuration: 0.2,
+      flipDuration: 0.29,
       staggerDelay: 0.007,
-      lineDelay: 0.08,
+      lineDelay: 0.04,
       trailRadius: 1.5,
       trailGradient: 0.03,
       dotShape: 'round',
       dotGap: true,
       trueColor: false,
     };
-    const CROP_SIZE = 64;
+    const MAX_CROP_SIZE = 512;
 
     // --- Scene setup ---
     const scene = new THREE.Scene();
@@ -259,21 +259,24 @@
 
     // --- Texture helpers ---
     function createCropCanvas(img, col, row, flipH) {
+      const sw = img.width / params.cols;
+      const sh = img.height / params.rows;
+      const cw = Math.min(Math.ceil(sw), MAX_CROP_SIZE);
+      const ch = Math.min(Math.ceil(sh), MAX_CROP_SIZE);
+
       const canvas = document.createElement('canvas');
-      canvas.width = CROP_SIZE;
-      canvas.height = CROP_SIZE;
+      canvas.width = cw;
+      canvas.height = ch;
       const ctx = canvas.getContext('2d');
 
       const sx = (col / params.cols) * img.width;
       const sy = (row / params.rows) * img.height;
-      const sw = img.width / params.cols;
-      const sh = img.height / params.rows;
 
       if (flipH) {
-        ctx.translate(CROP_SIZE, 0);
+        ctx.translate(cw, 0);
         ctx.scale(-1, 1);
       }
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, CROP_SIZE, CROP_SIZE);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
       return canvas;
     }
 
