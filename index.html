@@ -565,6 +565,7 @@
             const dot = new FlipDot(group, col, row, frontTex, backTex);
             dot.frontMat = frontMat;
             dot.backMat = backMat;
+            dot.applyMaterial();
             dots.push(dot);
           }
         }
