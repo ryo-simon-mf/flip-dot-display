@@ -779,17 +779,22 @@
           return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
-        // Wind sweeps from side to side. Each dot's delay is primarily
-        // driven by its column (so the wave travels horizontally), plus
-        // per-dot noise so dots in the same column flip with slight offset.
+        // Each row starts its horizontal sweep at a different random time
+        const rowStartOffset = new Map();
+        for (let r = 0; r < params.rows; r++) {
+          // Random offset: 0 to (rows * lineDelay * 2) seconds
+          rowStartOffset.set(r, Math.random() * params.rows * params.lineDelay * 2000);
+        }
+
         const noiseSeed = Math.random() * 1000;
         let maxDelay = 0;
 
         dots.forEach((dot, idx) => {
           const colOrder = windDir > 0 ? dot.col : (params.cols - 1 - dot.col);
-          const baseDelay = colOrder * params.lineDelay * 1000;
-          // Per-dot jitter: noise over (col, row) → each row gets a slightly different offset
-          const jitter = noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 1200;
+          const rowStart = rowStartOffset.get(dot.row);
+          const baseDelay = rowStart + colOrder * params.lineDelay * 1000;
+          // Small per-dot noise jitter within the row
+          const jitter = noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 400;
           const delay = baseDelay + jitter;
           if (delay > maxDelay) maxDelay = delay;
           pendingTimers.push(setTimeout(() => {
