@@ -128,6 +128,9 @@
     <button id="btn-bg" class="btn-sys">BG: White</button>
     <button id="btn-truecolor" class="btn-sys">PBR Light</button>
     <button id="btn-fit" class="btn-sys">Fit</button>
+    <button id="btn-save" class="btn-sys">Save</button>
+    <button id="btn-load" class="btn-sys">Load</button>
+    <input type="file" id="input-load" accept="application/json" style="display:none">
   </div>
 
   <button id="help-btn" title="Help">?</button>
@@ -165,6 +168,8 @@
         <tr><td>BG</td><td>Cycle background color: White / Black / Gray</td></tr>
         <tr><td>True Color</td><td>Toggle unlit mode: show original image colors without lighting</td></tr>
         <tr><td>Fit</td><td>Auto-fit camera so dots fill the window</td></tr>
+        <tr><td>Save</td><td>Download current settings (params, camera, bg) as JSON</td></tr>
+        <tr><td>Load</td><td>Load settings from a JSON preset file</td></tr>
       </table>
 
       <h3>GUI Parameters (Panel)</h3>
@@ -1132,6 +1137,65 @@
       document.getElementById('btn-fit').onclick = fitCamera;
       // Auto-fit on startup
       fitCamera();
+
+      // --- Save / Load preset ---
+      document.getElementById('btn-save').onclick = () => {
+        const preset = {
+          version: 1,
+          params: { ...params },
+          camera: {
+            position: camera.position.toArray(),
+            target: controls.target.toArray(),
+          },
+          bgIdx,
+        };
+        const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `flip-dot-preset-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      const inputLoad = document.getElementById('input-load');
+      document.getElementById('btn-load').onclick = () => inputLoad.click();
+      inputLoad.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const preset = JSON.parse(ev.target.result);
+            if (preset.params) {
+              Object.assign(params, preset.params);
+              // Reflect in buttons
+              btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+              btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
+              btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
+              btnGlossy.textContent = params.roughness < 0.15 ? 'Matte' : 'Glossy';
+              // Rebuild dots (applies new grid, shape, gap, materials)
+              buildDots();
+              // Update GUI controllers
+              gui.controllersRecursive().forEach(c => c.updateDisplay());
+            }
+            if (preset.bgIdx !== undefined) {
+              bgIdx = preset.bgIdx % bgColors.length;
+              applyBgTheme(bgColors[bgIdx]);
+            }
+            if (preset.camera) {
+              camera.position.fromArray(preset.camera.position);
+              controls.target.fromArray(preset.camera.target);
+              controls.update();
+            }
+          } catch (err) {
+            console.error('Failed to load preset:', err);
+            alert('Failed to load preset: ' + err.message);
+          }
+        };
+        reader.readAsText(file);
+        inputLoad.value = '';
+      });
 
       // --- GUI ---
       const gui = new GUI({ title: 'Parameters' });
