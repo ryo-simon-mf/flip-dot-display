@@ -1117,13 +1117,14 @@
       };
 
       function fitCamera() {
-        const gridW = (params.cols - 1) * params.spacing;
-        const gridH = (params.rows - 1) * params.spacing;
+        // Use the actual dot extent (including size, not just center-to-center spacing)
+        const gridW = params.cols * params.spacing;
+        const gridH = params.rows * params.spacing;
         const fovRad = camera.fov * Math.PI / 180;
         const aspect = camera.aspect;
         const dH = (gridH / 2) / Math.tan(fovRad / 2);
         const dW = (gridW / 2) / (Math.tan(fovRad / 2) * aspect);
-        const d = Math.max(dH, dW) * 1.05;
+        const d = Math.max(dH, dW);
         camera.position.set(0, 0, d);
         controls.target.set(0, 0, 0);
         controls.update();
