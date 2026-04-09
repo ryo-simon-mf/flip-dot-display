@@ -760,68 +760,41 @@
         if (animating) return;
         animating = true;
 
-        // Vertical wind: top-to-bottom or bottom-to-top, flips each horizontal row as a unit
+        // Horizontal wind: left-to-right or right-to-left
         const windDir = Math.random() < 0.5 ? 1 : -1;
-        const flipAxis = new THREE.Vector3(windDir, 0, 0);
+        const flipAxis = new THREE.Vector3(0, windDir, 0);
 
-        // Simple 1D value noise for per-row variation
-        function hash1(x) {
-          let h = (x | 0) * 374761393;
+        // Simple 2D value noise for per-dot jitter
+        function hash2(x, y) {
+          let h = (x | 0) * 374761393 + (y | 0) * 668265263;
           h = (h ^ (h >> 13)) * 1274126177;
           return ((h ^ (h >> 16)) & 0x7fffffff) / 0x7fffffff;
         }
         function smoothstep(t) { return t * t * (3 - 2 * t); }
-        function noise1(px, seed) {
-          const ix = Math.floor(px + seed);
-          const fx = smoothstep(px + seed - ix);
-          return hash1(ix) * (1 - fx) + hash1(ix + 1) * fx;
+        function noise2(px, py) {
+          const ix = Math.floor(px), iy = Math.floor(py);
+          const fx = smoothstep(px - ix), fy = smoothstep(py - iy);
+          const a = hash2(ix, iy), b = hash2(ix + 1, iy);
+          const c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
+          return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
-        // Group dots by row
-        const dotsByRow = new Map();
-        dots.forEach((dot, idx) => {
-          if (!dotsByRow.has(dot.row)) dotsByRow.set(dot.row, []);
-          dotsByRow.get(dot.row).push(idx);
-        });
-
-        // Order rows by wind direction (windDir=1: top→bottom, -1: bottom→top)
-        const rowList = [...dotsByRow.keys()].sort((a, b) => (a - b) * windDir);
-
-        // Gust configuration: 2-4 gusts with varying strength
-        const gustCount = 2 + Math.floor(Math.random() * 3);
-        const baseGustGap = params.rows * params.lineDelay * 0.6;
-        const gusts = [];
-        for (let g = 0; g < gustCount; g++) {
-          gusts.push({
-            delay: g * baseGustGap * (0.6 + Math.random() * 0.8),
-            strength: g === gustCount - 1 ? 1.5 : 0.3 + Math.random() * 0.4,
-            noiseScale: 0.3 + Math.random() * 0.3,
-            noiseSeed: Math.random() * 1000,
-          });
-        }
-
-        // Per-row resistance
-        const rowResistance = new Map();
-        rowList.forEach(r => rowResistance.set(r, Math.random()));
-
-        // Assign each row to a gust and schedule
+        // Wind sweeps from side to side. Each dot's delay is primarily
+        // driven by its column (so the wave travels horizontally), plus
+        // per-dot noise so dots in the same column flip with slight offset.
+        const noiseSeed = Math.random() * 1000;
         let maxDelay = 0;
-        rowList.forEach((row, sortedIdx) => {
-          for (const gust of gusts) {
-            const noiseVal = noise1(row * gust.noiseScale, gust.noiseSeed);
-            if (gust.strength - noiseVal * 0.4 > rowResistance.get(row) * 0.8) {
-              const delay = gust.delay * 1000
-                + sortedIdx * params.lineDelay * 1000
-                + noiseVal * params.lineDelay * 1500;
-              if (delay > maxDelay) maxDelay = delay;
-              const rowDots = dotsByRow.get(row);
-              pendingTimers.push(setTimeout(() => {
-                const time = clock.getElapsedTime();
-                rowDots.forEach(idx => dots[idx]?.startFlip(time, flipAxis, true));
-              }, delay));
-              break;
-            }
-          }
+
+        dots.forEach((dot, idx) => {
+          const colOrder = windDir > 0 ? dot.col : (params.cols - 1 - dot.col);
+          const baseDelay = colOrder * params.lineDelay * 1000;
+          // Per-dot jitter: noise over (col, row) → each row gets a slightly different offset
+          const jitter = noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 1200;
+          const delay = baseDelay + jitter;
+          if (delay > maxDelay) maxDelay = delay;
+          pendingTimers.push(setTimeout(() => {
+            dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
+          }, delay));
         });
 
         pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 2000));
