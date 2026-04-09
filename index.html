@@ -760,11 +760,11 @@
         if (animating) return;
         animating = true;
 
-        // Horizontal only: left-to-right or right-to-left
-        const windX = Math.random() < 0.5 ? 1 : -1;
-        const flipAxis = new THREE.Vector3(0, windX, 0);
+        // Vertical wind: top-to-bottom or bottom-to-top, flips each horizontal row as a unit
+        const windDir = Math.random() < 0.5 ? 1 : -1;
+        const flipAxis = new THREE.Vector3(windDir, 0, 0);
 
-        // Simple 1D value noise for per-column variation
+        // Simple 1D value noise for per-row variation
         function hash1(x) {
           let h = (x | 0) * 374761393;
           h = (h ^ (h >> 13)) * 1274126177;
@@ -777,19 +777,19 @@
           return hash1(ix) * (1 - fx) + hash1(ix + 1) * fx;
         }
 
-        // Group dots by column
-        const dotsByCol = new Map();
+        // Group dots by row
+        const dotsByRow = new Map();
         dots.forEach((dot, idx) => {
-          if (!dotsByCol.has(dot.col)) dotsByCol.set(dot.col, []);
-          dotsByCol.get(dot.col).push(idx);
+          if (!dotsByRow.has(dot.row)) dotsByRow.set(dot.row, []);
+          dotsByRow.get(dot.row).push(idx);
         });
 
-        // Order columns by wind direction
-        const colList = [...dotsByCol.keys()].sort((a, b) => (a - b) * windX);
+        // Order rows by wind direction (windDir=1: top→bottom, -1: bottom→top)
+        const rowList = [...dotsByRow.keys()].sort((a, b) => (a - b) * windDir);
 
         // Gust configuration: 2-4 gusts with varying strength
         const gustCount = 2 + Math.floor(Math.random() * 3);
-        const baseGustGap = params.cols * params.lineDelay * 0.6;
+        const baseGustGap = params.rows * params.lineDelay * 0.6;
         const gusts = [];
         for (let g = 0; g < gustCount; g++) {
           gusts.push({
@@ -800,24 +800,24 @@
           });
         }
 
-        // Per-column resistance
-        const colResistance = new Map();
-        colList.forEach(c => colResistance.set(c, Math.random()));
+        // Per-row resistance
+        const rowResistance = new Map();
+        rowList.forEach(r => rowResistance.set(r, Math.random()));
 
-        // Assign each column to a gust and schedule
+        // Assign each row to a gust and schedule
         let maxDelay = 0;
-        colList.forEach((col, sortedIdx) => {
+        rowList.forEach((row, sortedIdx) => {
           for (const gust of gusts) {
-            const noiseVal = noise1(col * gust.noiseScale, gust.noiseSeed);
-            if (gust.strength - noiseVal * 0.4 > colResistance.get(col) * 0.8) {
+            const noiseVal = noise1(row * gust.noiseScale, gust.noiseSeed);
+            if (gust.strength - noiseVal * 0.4 > rowResistance.get(row) * 0.8) {
               const delay = gust.delay * 1000
                 + sortedIdx * params.lineDelay * 1000
                 + noiseVal * params.lineDelay * 1500;
               if (delay > maxDelay) maxDelay = delay;
-              const colDots = dotsByCol.get(col);
+              const rowDots = dotsByRow.get(row);
               pendingTimers.push(setTimeout(() => {
                 const time = clock.getElapsedTime();
-                colDots.forEach(idx => dots[idx]?.startFlip(time, flipAxis, true));
+                rowDots.forEach(idx => dots[idx]?.startFlip(time, flipAxis, true));
               }, delay));
               break;
             }
