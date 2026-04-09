@@ -423,10 +423,11 @@
         }
       }
 
-      startFlip(time, axis) {
+      startFlip(time, axis, flutter = false) {
         if (this.flipping) return;
         this.flipping = true;
         this.flipStartTime = time;
+        this.flutter = flutter;
         this.startQuat.copy(this.group.quaternion);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
@@ -444,13 +445,23 @@
       update(time) {
         if (!this.flipping) return;
         const elapsed = time - this.flipStartTime;
-        const t = Math.min(elapsed / params.flipDuration, 1);
-        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const duration = this.flutter ? params.flipDuration * 1.6 : params.flipDuration;
+        const t = Math.min(elapsed / duration, 1);
+        let eased;
+        if (this.flutter) {
+          // Smooth approach + decaying sine oscillation (flutter/sway)
+          const progress = 1 - Math.pow(1 - t, 3);
+          const wobble = Math.sin(t * Math.PI * 3.5) * Math.pow(1 - t, 1.5) * 0.18;
+          eased = progress + wobble;
+        } else {
+          eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        }
         this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
         this._correctUV();
         if (t >= 1) {
           this.flipping = false;
           this.showingFront = !this.showingFront;
+          this.flutter = false;
         }
       }
 
@@ -805,14 +816,14 @@
                 + Math.random() * params.lineDelay * 2000;
               if (delay > maxDelay) maxDelay = delay;
               pendingTimers.push(setTimeout(() => {
-                dots[d.idx]?.startFlip(clock.getElapsedTime(), flipAxis);
+                dots[d.idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
               }, delay));
               break;
             }
           }
         });
 
-        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 1000));
+        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 2000));
       }
 
       function resetDots() {
