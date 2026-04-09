@@ -779,11 +779,13 @@
           return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
-        // Each row starts its horizontal sweep at a different random time
+        // Each row starts its horizontal sweep at a slightly different time
+        // Use smooth noise so adjacent rows have similar (not extremely different) offsets
+        const rowNoiseSeed = Math.random() * 1000;
         const rowStartOffset = new Map();
         for (let r = 0; r < params.rows; r++) {
-          // Random offset: 0 to (rows * lineDelay * 2) seconds
-          rowStartOffset.set(r, Math.random() * params.rows * params.lineDelay * 2000);
+          const n = noise2(r * 0.5 + rowNoiseSeed, rowNoiseSeed); // smooth across rows
+          rowStartOffset.set(r, n * params.lineDelay * 600);
         }
 
         const noiseSeed = Math.random() * 1000;
