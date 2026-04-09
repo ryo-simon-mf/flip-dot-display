@@ -779,13 +779,15 @@
           return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
-        // Each row starts its horizontal sweep at a slightly different time
-        // Use smooth noise so adjacent rows have similar (not extremely different) offsets
+        // Each row starts its horizontal sweep at a moderately different time.
+        // Use smooth noise so adjacent rows vary but aren't too extreme.
         const rowNoiseSeed = Math.random() * 1000;
         const rowStartOffset = new Map();
+        const maxRowOffset = params.flipDuration * 2 * 1000; // ~2 flip durations
         for (let r = 0; r < params.rows; r++) {
-          const n = noise2(r * 0.5 + rowNoiseSeed, rowNoiseSeed); // smooth across rows
-          rowStartOffset.set(r, n * params.lineDelay * 600);
+          // noise2 @ scale 0.7 gives smooth transitions across adjacent rows
+          const n = noise2(r * 0.7 + rowNoiseSeed, rowNoiseSeed);
+          rowStartOffset.set(r, n * maxRowOffset);
         }
 
         const noiseSeed = Math.random() * 1000;
