@@ -145,6 +145,14 @@
         <tr><td><kbd>D</kbd></td><td>Toggle UI (buttons &amp; image inputs)</td></tr>
         <tr><td><kbd>M</kbd></td><td>Cycle Mouse Trail mode (Off / Straight / Chevron)</td></tr>
         <tr><td><kbd>F</kbd></td><td>Fit camera to fill window with dots</td></tr>
+        <tr><td><kbd>1</kbd></td><td>Ripple</td></tr>
+        <tr><td><kbd>2</kbd></td><td>Down</td></tr>
+        <tr><td><kbd>3</kbd></td><td>Up</td></tr>
+        <tr><td><kbd>4</kbd></td><td>Right</td></tr>
+        <tr><td><kbd>5</kbd></td><td>Left</td></tr>
+        <tr><td><kbd>6</kbd></td><td>Wind</td></tr>
+        <tr><td><kbd>7</kbd></td><td>Natural Wind</td></tr>
+        <tr><td><kbd>0</kbd></td><td>Reset</td></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
       </table>
 
@@ -1229,7 +1237,7 @@
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = 'A:GUI D:UI M:Trail F:Fit ?:Help';
+      hint.textContent = '1-7:Anim 0:Reset A:GUI D:UI F:Fit ?:Help';
       gui.domElement.appendChild(hint);
 
       // --- Help ---
@@ -1244,8 +1252,22 @@
       // --- Keyboard toggles ---
       const topUi = document.getElementById('top-ui');
       const bottomUi = document.getElementById('ui');
+      const numKeyMap = {
+        '1': 'btn-ripple',
+        '2': 'btn-seq-down',
+        '3': 'btn-seq-up',
+        '4': 'btn-seq-right',
+        '5': 'btn-seq-left',
+        '6': 'btn-wind',
+        '7': 'btn-natural-wind',
+        '0': 'btn-reset',
+      };
       window.addEventListener('keydown', (e) => {
         if (e.key === '?') { toggleHelp(); return; }
+        if (numKeyMap[e.key]) {
+          document.getElementById(numKeyMap[e.key]).click();
+          return;
+        }
         if (e.key === 'f' || e.key === 'F') {
           document.getElementById('btn-fit').click();
         }
