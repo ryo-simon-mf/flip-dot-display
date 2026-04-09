@@ -449,10 +449,17 @@
         const t = Math.min(elapsed / duration, 1);
         let eased;
         if (this.flutter) {
-          // Smooth approach + decaying sine oscillation (flutter/sway)
-          const progress = 1 - Math.pow(1 - t, 3);
-          const wobble = Math.sin(t * Math.PI * 3.5) * Math.pow(1 - t, 1.5) * 0.18;
-          eased = progress + wobble;
+          // Overshoot to 1.1 then settle to 1.0 (single bump)
+          const tp = 0.75;   // time of peak
+          const over = 0.1;  // overshoot amount
+          if (t < tp) {
+            const s = t / tp;
+            eased = (1 + over) * (1 - Math.pow(1 - s, 2));
+          } else {
+            const s = (t - tp) / (1 - tp);
+            const smooth = s * s * (3 - 2 * s);
+            eased = (1 + over) - over * smooth;
+          }
         } else {
           eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         }
@@ -755,68 +762,62 @@
 
         // Horizontal only: left-to-right or right-to-left
         const windX = Math.random() < 0.5 ? 1 : -1;
-        const windY = 0;
         const flipAxis = new THREE.Vector3(0, windX, 0);
 
-        const offsetX = (params.cols - 1) * params.spacing / 2;
-        const offsetY = (params.rows - 1) * params.spacing / 2;
-
-        // Inline 2D value noise (no library needed)
-        function hash(x, y) {
-          let h = (x | 0) * 374761393 + (y | 0) * 668265263;
+        // Simple 1D value noise for per-column variation
+        function hash1(x) {
+          let h = (x | 0) * 374761393;
           h = (h ^ (h >> 13)) * 1274126177;
           return ((h ^ (h >> 16)) & 0x7fffffff) / 0x7fffffff;
         }
         function smoothstep(t) { return t * t * (3 - 2 * t); }
-        function valueNoise(px, py) {
-          const ix = Math.floor(px), iy = Math.floor(py);
-          const fx = smoothstep(px - ix), fy = smoothstep(py - iy);
-          const a = hash(ix, iy), b = hash(ix + 1, iy);
-          const c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
-          return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+        function noise1(px, seed) {
+          const ix = Math.floor(px + seed);
+          const fx = smoothstep(px + seed - ix);
+          return hash1(ix) * (1 - fx) + hash1(ix + 1) * fx;
         }
-        function fractalNoise(px, py, seed) {
-          return valueNoise(px + seed, py + seed) * 0.7
-               + valueNoise(px * 2 + seed + 100, py * 2 + seed + 100) * 0.3;
-        }
+
+        // Group dots by column
+        const dotsByCol = new Map();
+        dots.forEach((dot, idx) => {
+          if (!dotsByCol.has(dot.col)) dotsByCol.set(dot.col, []);
+          dotsByCol.get(dot.col).push(idx);
+        });
+
+        // Order columns by wind direction
+        const colList = [...dotsByCol.keys()].sort((a, b) => (a - b) * windX);
 
         // Gust configuration: 2-4 gusts with varying strength
         const gustCount = 2 + Math.floor(Math.random() * 3);
-        const baseGustGap = (params.cols + params.rows) * params.lineDelay * 0.5;
+        const baseGustGap = params.cols * params.lineDelay * 0.6;
         const gusts = [];
         for (let g = 0; g < gustCount; g++) {
           gusts.push({
             delay: g * baseGustGap * (0.6 + Math.random() * 0.8),
             strength: g === gustCount - 1 ? 1.5 : 0.3 + Math.random() * 0.4,
-            noiseScale: 0.15 + Math.random() * 0.15,
+            noiseScale: 0.3 + Math.random() * 0.3,
             noiseSeed: Math.random() * 1000,
           });
         }
 
-        // Per-dot: project onto wind, assign resistance, find first gust that flips it
-        const dotData = dots.map((dot, idx) => {
-          const wx = dot.col * params.spacing - offsetX;
-          const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
-          return { idx, wx, wy, proj: wx * windX + wy * windY, resistance: Math.random() };
-        });
+        // Per-column resistance
+        const colResistance = new Map();
+        colList.forEach(c => colResistance.set(c, Math.random()));
 
-        const projMin = Math.min(...dotData.map(d => d.proj));
-        const projRange = (Math.max(...dotData.map(d => d.proj)) - projMin) || 1;
-        const sweepTime = Math.max(params.cols, params.rows) * params.lineDelay;
+        // Assign each column to a gust and schedule
         let maxDelay = 0;
-
-        dotData.forEach(d => {
-          const normProj = (d.proj - projMin) / projRange;
+        colList.forEach((col, sortedIdx) => {
           for (const gust of gusts) {
-            const noiseVal = fractalNoise(d.wx * gust.noiseScale, d.wy * gust.noiseScale, gust.noiseSeed);
-            if (gust.strength - noiseVal * 0.4 > d.resistance * 0.8) {
+            const noiseVal = noise1(col * gust.noiseScale, gust.noiseSeed);
+            if (gust.strength - noiseVal * 0.4 > colResistance.get(col) * 0.8) {
               const delay = gust.delay * 1000
-                + normProj * sweepTime * 1000
-                + noiseVal * params.lineDelay * 6000
-                + Math.random() * params.lineDelay * 2000;
+                + sortedIdx * params.lineDelay * 1000
+                + noiseVal * params.lineDelay * 1500;
               if (delay > maxDelay) maxDelay = delay;
+              const colDots = dotsByCol.get(col);
               pendingTimers.push(setTimeout(() => {
-                dots[d.idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
+                const time = clock.getElapsedTime();
+                colDots.forEach(idx => dots[idx]?.startFlip(time, flipAxis, true));
               }, delay));
               break;
             }
