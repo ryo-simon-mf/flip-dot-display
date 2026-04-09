@@ -1116,19 +1116,21 @@
         dots.forEach(dot => dot.applyMaterial());
       };
 
-      document.getElementById('btn-fit').onclick = () => {
+      function fitCamera() {
         const gridW = (params.cols - 1) * params.spacing;
         const gridH = (params.rows - 1) * params.spacing;
         const fovRad = camera.fov * Math.PI / 180;
         const aspect = camera.aspect;
-        // Distance to fit height and width, pick the larger
         const dH = (gridH / 2) / Math.tan(fovRad / 2);
         const dW = (gridW / 2) / (Math.tan(fovRad / 2) * aspect);
-        const d = Math.max(dH, dW) * 1.05; // 5% margin
+        const d = Math.max(dH, dW) * 1.05;
         camera.position.set(0, 0, d);
         controls.target.set(0, 0, 0);
         controls.update();
-      };
+      }
+      document.getElementById('btn-fit').onclick = fitCamera;
+      // Auto-fit on startup
+      fitCamera();
 
       // --- GUI ---
       const gui = new GUI({ title: 'Parameters' });
