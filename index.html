@@ -227,7 +227,7 @@
     const params = {
       cols: 16,
       rows: 9,
-      spacing: 1.0,
+      spacing: 1.5,
       squash: 0.1,
       roughness: 0.3,
       metalness: 0.1,
@@ -1281,6 +1281,7 @@
           const hidden = topUi.style.display === 'none';
           topUi.style.display = hidden ? '' : 'none';
           bottomUi.style.display = hidden ? '' : 'none';
+          helpBtn.style.display = hidden ? '' : 'none';
         }
       });
 
