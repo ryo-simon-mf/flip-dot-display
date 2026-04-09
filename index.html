@@ -1129,7 +1129,8 @@
         const aspect = camera.aspect;
         const dH = (gridH / 2) / Math.tan(fovRad / 2);
         const dW = (gridW / 2) / (Math.tan(fovRad / 2) * aspect);
-        const d = Math.max(dH, dW);
+        // "cover" mode: fill the shorter dimension, slight overflow on the other
+        const d = Math.min(dH, dW);
         camera.position.set(0, 0, d);
         controls.target.set(0, 0, 0);
         controls.update();
