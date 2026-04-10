@@ -243,7 +243,7 @@
       dotGap: false,
       trueColor: true,
     };
-    const MAX_CROP_SIZE = 512;
+    const CROP_SIZE = 256;
 
     // --- Scene setup ---
     const scene = new THREE.Scene();
@@ -277,24 +277,21 @@
 
     // --- Texture helpers ---
     function createCropCanvas(img, col, row, flipH) {
-      const sw = img.width / params.cols;
-      const sh = img.height / params.rows;
-      // Always square canvas (matches square dot face), sized by the larger dimension
-      const cropSize = Math.min(Math.ceil(Math.max(sw, sh)), MAX_CROP_SIZE);
-
       const canvas = document.createElement('canvas');
-      canvas.width = cropSize;
-      canvas.height = cropSize;
+      canvas.width = CROP_SIZE;
+      canvas.height = CROP_SIZE;
       const ctx = canvas.getContext('2d');
 
       const sx = (col / params.cols) * img.width;
       const sy = (row / params.rows) * img.height;
+      const sw = img.width / params.cols;
+      const sh = img.height / params.rows;
 
       if (flipH) {
-        ctx.translate(cropSize, 0);
+        ctx.translate(CROP_SIZE, 0);
         ctx.scale(-1, 1);
       }
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cropSize, cropSize);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, CROP_SIZE, CROP_SIZE);
       return canvas;
     }
 
