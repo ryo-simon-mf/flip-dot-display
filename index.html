@@ -732,30 +732,62 @@
       const _calmAxis = new THREE.Vector3(0, 1, 0);
       const _calmQuat = new THREE.Quaternion();
 
-      // Breeze (そよ風): random dots flip/unflip continuously
+      // Breeze (そよ風): wave sweeps top→bottom, each row flips then flips back
+      let breezeTimers = [];
       function startBreeze() {
         if (breezeInterval) return;
         const btnBreeze = document.getElementById('btn-breeze');
         btnBreeze.classList.add('active');
         stopCalm();
-        breezeInterval = setInterval(() => {
-          const count = 1 + Math.floor(Math.random() * 3);
-          const time = clock.getElapsedTime();
-          for (let i = 0; i < count; i++) {
-            const idx = Math.floor(Math.random() * dots.length);
-            const dot = dots[idx];
-            if (!dot.flipping) {
-              const dir = Math.random() < 0.5 ? 1 : -1;
-              dot.startFlip(time, new THREE.Vector3(0, dir, 0), true);
+
+        function runWave() {
+          // Clear previous wave timers
+          breezeTimers.forEach(id => clearTimeout(id));
+          breezeTimers = [];
+
+          const flipAxis = new THREE.Vector3(1, 0, 0);
+          const rowDelay = params.lineDelay * 1000 * 2.5; // delay between rows
+          const holdTime = params.flipDuration * 1000 * 3;  // how long to show back before returning
+
+          for (let r = 0; r < params.rows; r++) {
+            const baseDelay = r * rowDelay;
+            // Flip to back (with per-dot jitter)
+            for (let c = 0; c < params.cols; c++) {
+              const idx = r * params.cols + c;
+              const jitter = (Math.random() - 0.5) * rowDelay * 0.4;
+              breezeTimers.push(setTimeout(() => {
+                dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
+              }, baseDelay + jitter));
+            }
+            // Flip back to front after hold time
+            for (let c = 0; c < params.cols; c++) {
+              const idx = r * params.cols + c;
+              const jitter = (Math.random() - 0.5) * rowDelay * 0.4;
+              breezeTimers.push(setTimeout(() => {
+                dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
+              }, baseDelay + holdTime + jitter));
             }
           }
-        }, 150);
+
+          // Total wave duration, then repeat
+          const totalDuration = params.rows * rowDelay + holdTime + params.flipDuration * 1000 * 2;
+          breezeInterval = setTimeout(() => {
+            breezeInterval = null;
+            if (document.getElementById('btn-breeze').classList.contains('active')) {
+              breezeInterval = true; // flag to keep running
+              runWave();
+            }
+          }, totalDuration);
+        }
+
+        breezeInterval = true;
+        runWave();
       }
       function stopBreeze() {
-        if (breezeInterval) {
-          clearInterval(breezeInterval);
-          breezeInterval = null;
-        }
+        breezeTimers.forEach(id => clearTimeout(id));
+        breezeTimers = [];
+        if (breezeInterval && breezeInterval !== true) clearTimeout(breezeInterval);
+        breezeInterval = null;
         document.getElementById('btn-breeze').classList.remove('active');
       }
 
