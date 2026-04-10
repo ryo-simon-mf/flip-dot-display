@@ -6,7 +6,7 @@
   <title>3D Flip-Dot Display</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #fff; overflow: hidden; font-family: sans-serif; }
+    body { background: #0a0a0a; overflow: hidden; font-family: sans-serif; }
     canvas { display: block; }
 
     #top-ui {
@@ -25,19 +25,19 @@
       gap: 8px;
     }
     .img-input label {
-      color: rgba(0,0,0,0.6);
+      color: rgba(255,255,255,0.7);
       font-size: 13px;
     }
     .img-input .thumb {
       width: 48px;
       height: 28px;
       border-radius: 4px;
-      border: 1px solid rgba(0,0,0,0.2);
+      border: 1px solid rgba(255,255,255,0.3);
       object-fit: cover;
       cursor: pointer;
     }
     .img-input .thumb.empty {
-      background: rgba(0,0,0,0.08);
+      background: rgba(255,255,255,0.1);
     }
     .img-input input[type="file"] { display: none; }
 
@@ -52,29 +52,29 @@
     }
     #ui button {
       padding: 10px 24px;
-      border: 1px solid rgba(0,0,0,0.2);
-      color: #333;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
       border-radius: 8px;
       cursor: pointer;
       font-size: 14px;
       backdrop-filter: blur(10px);
       transition: background 0.2s, border-color 0.2s;
     }
-    .btn-anim { background: rgba(0,0,0,0.06); }
-    .btn-anim:hover { background: rgba(0,0,0,0.12); }
-    .btn-sys { background: rgba(0,0,0,0.06); }
-    .btn-sys:hover { background: rgba(0,0,0,0.12); }
+    .btn-anim { background: rgba(255,255,255,0.08); }
+    .btn-anim:hover { background: rgba(255,255,255,0.2); }
+    .btn-sys { background: rgba(255,255,255,0.08); }
+    .btn-sys:hover { background: rgba(255,255,255,0.2); }
     .btn-anim.active { background: rgba(0,120,255,0.2); border-color: rgba(0,120,255,0.5); color: #0066cc; }
 
     #help-btn {
       position: fixed; bottom: 20px; left: 20px; z-index: 20;
       width: 36px; height: 36px; border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.2); background: rgba(0,0,0,0.06);
-      color: #333; font-size: 18px; font-weight: bold; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.08);
+      color: #fff; font-size: 18px; font-weight: bold; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       backdrop-filter: blur(10px); transition: background 0.2s;
     }
-    #help-btn:hover { background: rgba(0,0,0,0.12); }
+    #help-btn:hover { background: rgba(255,255,255,0.2); }
 
     #help-overlay {
       display: none; position: fixed; inset: 0; z-index: 100;
@@ -126,7 +126,7 @@
     <button id="btn-shape" class="btn-sys">Shape: Square</button>
     <button id="btn-gap" class="btn-sys">Gap: Off</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
-    <button id="btn-bg" class="btn-sys">BG: White</button>
+    <button id="btn-bg" class="btn-sys">BG: Black</button>
     <button id="btn-truecolor" class="btn-sys">PBR Light</button>
     <button id="btn-fit" class="btn-sys">Fit</button>
     <button id="btn-save" class="btn-sys">Save</button>
@@ -247,7 +247,7 @@
 
     // --- Scene setup ---
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xffffff);
+    scene.background = new THREE.Color(0x0a0a0a);
 
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
     camera.position.set(0, 0, 40);
@@ -1110,7 +1110,7 @@
         { name: 'Black', scene: 0x0a0a0a, css: '#0a0a0a', dark: true },
         { name: 'Gray',  scene: 0x888888, css: '#888', dark: false },
       ];
-      let bgIdx = 0;
+      let bgIdx = 1; // default: Black
       const btnBg = document.getElementById('btn-bg');
 
       function applyBgTheme(bg) {
