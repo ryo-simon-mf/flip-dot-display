@@ -745,32 +745,39 @@
           breezeTimers.forEach(id => clearTimeout(id));
           breezeTimers = [];
 
-          const flipAxis = new THREE.Vector3(1, 0, 0);
-          const rowDelay = params.lineDelay * 1000 * 2.5; // delay between rows
+          // Horizontal wind: left-to-right or right-to-left
+          const windDir = Math.random() < 0.5 ? 1 : -1;
+          const flipAxis = new THREE.Vector3(0, windDir, 0);
+          const colDelay = params.lineDelay * 1000 * 2.5; // delay between columns
           const holdTime = params.flipDuration * 1000 * 3;  // how long to show back before returning
 
+          // Per-row offset: each row starts at a slightly different time
+          const rowOffsets = [];
           for (let r = 0; r < params.rows; r++) {
-            const baseDelay = r * rowDelay;
-            // Flip to back (with per-dot jitter)
-            for (let c = 0; c < params.cols; c++) {
+            rowOffsets.push((Math.random() - 0.5) * colDelay * 3);
+          }
+
+          for (let c = 0; c < params.cols; c++) {
+            const colOrder = windDir > 0 ? c : (params.cols - 1 - c);
+            const colBase = colOrder * colDelay;
+            for (let r = 0; r < params.rows; r++) {
               const idx = r * params.cols + c;
-              const jitter = (Math.random() - 0.5) * rowDelay * 0.4;
+              const rowOff = rowOffsets[r];
+              const jitter = (Math.random() - 0.5) * colDelay * 0.3;
+              const flipDelay = colBase + rowOff + jitter;
+              // Flip to back
               breezeTimers.push(setTimeout(() => {
                 dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
-              }, baseDelay + jitter));
-            }
-            // Flip back to front after hold time
-            for (let c = 0; c < params.cols; c++) {
-              const idx = r * params.cols + c;
-              const jitter = (Math.random() - 0.5) * rowDelay * 0.4;
+              }, Math.max(0, flipDelay)));
+              // Flip back to front
               breezeTimers.push(setTimeout(() => {
                 dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
-              }, baseDelay + holdTime + jitter));
+              }, Math.max(0, flipDelay + holdTime)));
             }
           }
 
           // Total wave duration, then repeat
-          const totalDuration = params.rows * rowDelay + holdTime + params.flipDuration * 1000 * 2;
+          const totalDuration = params.cols * colDelay + holdTime + params.flipDuration * 1000 * 2 + colDelay * 3;
           breezeInterval = setTimeout(() => {
             breezeInterval = null;
             if (document.getElementById('btn-breeze').classList.contains('active')) {
