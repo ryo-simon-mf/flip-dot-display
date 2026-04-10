@@ -1208,9 +1208,9 @@
             dots.forEach(dot => dot.applyMaterial());
           }
         } else {
-          // Restore default light positions
-          dirLight.position.set(10, 15, 20);
-          sideLight.position.set(-15, 5, 10);
+          // Restore to GUI light positions
+          updateLight();
+          lightFolder.controllersRecursive().forEach(c => c.updateDisplay());
         }
       };
 
@@ -1297,6 +1297,37 @@
       matFolder.add(params, 'metalness', 0, 1, 0.01).name('Metalness').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
       });
+
+      const lightFolder = gui.addFolder('Lighting');
+      const lightParams = {
+        mainX: dirLight.position.x,
+        mainY: dirLight.position.y,
+        mainZ: dirLight.position.z,
+        mainInt: dirLight.intensity,
+        sideX: sideLight.position.x,
+        sideY: sideLight.position.y,
+        sideZ: sideLight.position.z,
+        sideInt: sideLight.intensity,
+        ambientInt: 0.35,
+      };
+      const ambientLight = scene.children.find(c => c.isAmbientLight);
+      function updateLight() {
+        dirLight.position.set(lightParams.mainX, lightParams.mainY, lightParams.mainZ);
+        dirLight.intensity = lightParams.mainInt;
+        sideLight.position.set(lightParams.sideX, lightParams.sideY, lightParams.sideZ);
+        sideLight.intensity = lightParams.sideInt;
+        if (ambientLight) ambientLight.intensity = lightParams.ambientInt;
+      }
+      lightFolder.add(lightParams, 'ambientInt', 0, 2, 0.05).name('Ambient').onChange(updateLight);
+      lightFolder.add(lightParams, 'mainInt', 0, 3, 0.1).name('Main Intensity').onChange(updateLight);
+      lightFolder.add(lightParams, 'mainX', -30, 30, 1).name('Main X').onChange(updateLight);
+      lightFolder.add(lightParams, 'mainY', -30, 30, 1).name('Main Y').onChange(updateLight);
+      lightFolder.add(lightParams, 'mainZ', -30, 30, 1).name('Main Z').onChange(updateLight);
+      lightFolder.add(lightParams, 'sideInt', 0, 3, 0.1).name('Side Intensity').onChange(updateLight);
+      lightFolder.add(lightParams, 'sideX', -30, 30, 1).name('Side X').onChange(updateLight);
+      lightFolder.add(lightParams, 'sideY', -30, 30, 1).name('Side Y').onChange(updateLight);
+      lightFolder.add(lightParams, 'sideZ', -30, 30, 1).name('Side Z').onChange(updateLight);
+      lightFolder.close();
 
       const animFolder = gui.addFolder('Animation');
       animFolder.add(params, 'flipDuration', 0.05, 1.0, 0.01).name('Flip Duration');
