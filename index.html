@@ -844,10 +844,10 @@
             + noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 100;
           if (delay > maxDelay) maxDelay = delay;
           pendingTimers.push(setTimeout(() => {
-            dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
+            dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, false);
           }, delay));
         });
-        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 2000));
+        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 1000));
       }
 
       function resetDots() {
