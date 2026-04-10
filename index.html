@@ -279,22 +279,22 @@
     function createCropCanvas(img, col, row, flipH) {
       const sw = img.width / params.cols;
       const sh = img.height / params.rows;
-      const cw = Math.min(Math.ceil(sw), MAX_CROP_SIZE);
-      const ch = Math.min(Math.ceil(sh), MAX_CROP_SIZE);
+      // Always square canvas (matches square dot face), sized by the larger dimension
+      const cropSize = Math.min(Math.ceil(Math.max(sw, sh)), MAX_CROP_SIZE);
 
       const canvas = document.createElement('canvas');
-      canvas.width = cw;
-      canvas.height = ch;
+      canvas.width = cropSize;
+      canvas.height = cropSize;
       const ctx = canvas.getContext('2d');
 
       const sx = (col / params.cols) * img.width;
       const sy = (row / params.rows) * img.height;
 
       if (flipH) {
-        ctx.translate(cw, 0);
+        ctx.translate(cropSize, 0);
         ctx.scale(-1, 1);
       }
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cropSize, cropSize);
       return canvas;
     }
 
