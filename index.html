@@ -128,6 +128,7 @@
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: Black</button>
     <button id="btn-truecolor" class="btn-sys">PBR Light</button>
+    <button id="btn-dynlight" class="btn-sys">Dyn Light</button>
     <button id="btn-fit" class="btn-sys">Fit</button>
     <button id="btn-save" class="btn-sys">Save</button>
     <button id="btn-load" class="btn-sys">Load</button>
@@ -177,6 +178,7 @@
         <tr><td>Gap</td><td>Toggle gap between dots: On (spaced) / Off (tight)</td></tr>
         <tr><td>Glossy</td><td>Toggle surface finish: Matte / Glossy</td></tr>
         <tr><td>BG</td><td>Cycle background color: White / Black / Gray</td></tr>
+        <tr><td>Dyn Light</td><td>Toggle moving lights for dynamic shadows (auto-switches to PBR)</td></tr>
         <tr><td>True Color</td><td>Toggle unlit mode: show original image colors without lighting</td></tr>
         <tr><td>Fit</td><td>Auto-fit camera so dots fill the window</td></tr>
         <tr><td>Save</td><td>Download current settings (params, camera, bg) as JSON</td></tr>
@@ -1170,6 +1172,44 @@
         controls.target.set(0, 0, 0);
         controls.update();
       }
+      // --- Dynamic Light ---
+      let dynLightActive = false;
+      const btnDynLight = document.getElementById('btn-dynlight');
+
+      function updateDynLight(time) {
+        if (!dynLightActive) return;
+        // Main light orbits slowly in a figure-8 pattern
+        const r = 20;
+        dirLight.position.set(
+          Math.sin(time * 0.3) * r,
+          Math.cos(time * 0.2) * 10 + 8,
+          Math.cos(time * 0.3) * r * 0.5 + 15
+        );
+        // Side light sways gently
+        sideLight.position.set(
+          Math.sin(time * 0.5 + 2) * -15,
+          Math.cos(time * 0.4 + 1) * 5 + 5,
+          10
+        );
+      }
+
+      btnDynLight.onclick = () => {
+        dynLightActive = !dynLightActive;
+        btnDynLight.classList.toggle('active', dynLightActive);
+        if (dynLightActive) {
+          // Switch to PBR so lighting is visible
+          if (params.trueColor) {
+            params.trueColor = false;
+            btnTrueColor.textContent = 'True Color';
+            dots.forEach(dot => dot.applyMaterial());
+          }
+        } else {
+          // Restore default light positions
+          dirLight.position.set(10, 15, 20);
+          sideLight.position.set(-15, 5, 10);
+        }
+      };
+
       document.getElementById('btn-fit').onclick = fitCamera;
       // Auto-fit on startup
       fitCamera();
@@ -1324,6 +1364,7 @@
         const elapsed = clock.getElapsedTime();
         dots.forEach(dot => dot.update(elapsed));
         updateCalm(elapsed);
+        updateDynLight(elapsed);
         controls.update();
         renderer.render(scene, camera);
 
