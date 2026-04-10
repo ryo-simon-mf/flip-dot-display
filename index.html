@@ -732,7 +732,7 @@
       const _calmAxis = new THREE.Vector3(0, 1, 0);
       const _calmQuat = new THREE.Quaternion();
 
-      // Breeze (そよ風): one-shot horizontal wave, flip then flip back
+      // Breeze (そよ風): one-shot horizontal wave with row offset + flutter
       function triggerBreeze() {
         if (animating) return;
         animating = true;
@@ -740,7 +740,6 @@
         const windDir = Math.random() < 0.5 ? 1 : -1;
         const flipAxis = new THREE.Vector3(0, windDir, 0);
         const colDelay = params.lineDelay * 1000 * 2.5;
-        const holdTime = params.flipDuration * 1000 * 3;
 
         const rowOffsets = [];
         for (let r = 0; r < params.rows; r++) {
@@ -755,15 +754,11 @@
             const idx = r * params.cols + c;
             const rowOff = rowOffsets[r];
             const jitter = (Math.random() - 0.5) * colDelay * 0.3;
-            const flipDelay = Math.max(0, colBase + rowOff + jitter);
-            const returnDelay = flipDelay + holdTime;
-            if (returnDelay > maxDelay) maxDelay = returnDelay;
+            const delay = Math.max(0, colBase + rowOff + jitter);
+            if (delay > maxDelay) maxDelay = delay;
             pendingTimers.push(setTimeout(() => {
               dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
-            }, flipDelay));
-            pendingTimers.push(setTimeout(() => {
-              dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
-            }, returnDelay));
+            }, delay));
           }
         }
         pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 2000));
