@@ -117,8 +117,9 @@
     <button id="btn-seq-up" class="btn-anim">Up</button>
     <button id="btn-seq-right" class="btn-anim">Right</button>
     <button id="btn-seq-left" class="btn-anim">Left</button>
-    <button id="btn-wind" class="btn-anim">Wind</button>
-    <button id="btn-natural-wind" class="btn-anim">Natural Wind</button>
+    <button id="btn-breeze" class="btn-anim">Breeze</button>
+    <button id="btn-calm" class="btn-anim">Calm</button>
+    <button id="btn-gust" class="btn-anim">Gust</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
@@ -150,8 +151,9 @@
         <tr><td><kbd>3</kbd></td><td>Up</td></tr>
         <tr><td><kbd>4</kbd></td><td>Right</td></tr>
         <tr><td><kbd>5</kbd></td><td>Left</td></tr>
-        <tr><td><kbd>6</kbd></td><td>Wind</td></tr>
-        <tr><td><kbd>7</kbd></td><td>Natural Wind</td></tr>
+        <tr><td><kbd>6</kbd></td><td>Breeze (toggle)</td></tr>
+        <tr><td><kbd>7</kbd></td><td>Calm (toggle)</td></tr>
+        <tr><td><kbd>8</kbd></td><td>Gust</td></tr>
         <tr><td><kbd>0</kbd></td><td>Reset</td></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
       </table>
@@ -161,8 +163,9 @@
         <tr><td>Ripple</td><td>Center-outward ripple flip</td></tr>
         <tr><td>Down / Up</td><td>Row-by-row flip (top-down / bottom-up)</td></tr>
         <tr><td>Right / Left</td><td>Column-by-column flip</td></tr>
-        <tr><td>Wind</td><td>Random direction sweep with turbulence</td></tr>
-        <tr><td>Natural Wind</td><td>Multi-gust organic wind with irregular wavefront</td></tr>
+        <tr><td>Breeze</td><td>Toggle: random dots flip/unflip like a gentle breeze</td></tr>
+        <tr><td>Calm</td><td>Toggle: subtle swaying without full flips</td></tr>
+        <tr><td>Gust</td><td>Sudden strong wind flips all dots across</td></tr>
         <tr><td>Click Ripple</td><td>Toggle mode: click anywhere to ripple from that point</td></tr>
         <tr><td>Mouse Trail</td><td>Toggle drag-to-flip: Straight (column sweep) or Chevron (V-wave)</td></tr>
       </table>
@@ -715,69 +718,87 @@
         pendingTimers.push(setTimeout(() => { animating = false; }, totalTime * 1000));
       }
 
-      function triggerWind() {
-        if (animating) return;
-        animating = true;
+      // --- Wind modes: Breeze / Calm / Gust ---
+      let breezeInterval = null;
+      let calmActive = false;
+      const _calmAxis = new THREE.Vector3(0, 1, 0);
+      const _calmQuat = new THREE.Quaternion();
 
-        // Random wind angle
-        const angle = Math.random() * Math.PI * 2;
-        const windX = Math.cos(angle);
-        const windY = Math.sin(angle);
-        const flipAxis = new THREE.Vector3(-windY, windX, 0);
-
-        const offsetX = (params.cols - 1) * params.spacing / 2;
-        const offsetY = (params.rows - 1) * params.spacing / 2;
-
-        // Project all dots onto wind direction
-        const allDots = dots.map((dot, idx) => {
-          const wx = dot.col * params.spacing - offsetX;
-          const wy = (params.rows - 1 - dot.row) * params.spacing - offsetY;
-          const proj = wx * windX + wy * windY;
-          // Perpendicular distance for turbulence
-          const perp = Math.abs(wx * windY - wy * windX);
-          return { idx, proj, perp };
-        });
-        allDots.sort((a, b) => a.proj - b.proj);
-
-        // Group into lines
-        const lines = [];
-        let curDots = [allDots[0]];
-        let curProj = allDots[0].proj;
-        for (let i = 1; i < allDots.length; i++) {
-          if (allDots[i].proj - curProj > params.spacing * 0.5) {
-            lines.push(curDots);
-            curDots = [];
-            curProj = allDots[i].proj;
+      // Breeze (そよ風): random dots flip/unflip continuously
+      function startBreeze() {
+        if (breezeInterval) return;
+        const btnBreeze = document.getElementById('btn-breeze');
+        btnBreeze.classList.add('active');
+        stopCalm();
+        breezeInterval = setInterval(() => {
+          const count = 1 + Math.floor(Math.random() * 3);
+          const time = clock.getElapsedTime();
+          for (let i = 0; i < count; i++) {
+            const idx = Math.floor(Math.random() * dots.length);
+            const dot = dots[idx];
+            if (!dot.flipping) {
+              const dir = Math.random() < 0.5 ? 1 : -1;
+              dot.startFlip(time, new THREE.Vector3(0, dir, 0), true);
+            }
           }
-          curDots.push(allDots[i]);
+        }, 150);
+      }
+      function stopBreeze() {
+        if (breezeInterval) {
+          clearInterval(breezeInterval);
+          breezeInterval = null;
         }
-        lines.push(curDots);
-
-        // Schedule with line delay + per-dot turbulence jitter
-        let maxDelay = 0;
-        lines.forEach((line, lineIdx) => {
-          line.forEach(({ idx, perp }) => {
-            const baseDelay = lineIdx * params.lineDelay * 1000;
-            const jitter = (Math.random() * 0.4 + 0.8) * perp * 8;
-            const delay = baseDelay + jitter;
-            if (delay > maxDelay) maxDelay = delay;
-            pendingTimers.push(setTimeout(() => {
-              dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis);
-            }, delay));
-          });
-        });
-        pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 1000));
+        document.getElementById('btn-breeze').classList.remove('active');
       }
 
-      function triggerNaturalWind() {
+      // Calm (凪): subtle sway without full flips
+      function startCalm() {
+        if (calmActive) return;
+        calmActive = true;
+        document.getElementById('btn-calm').classList.add('active');
+        stopBreeze();
+        // Store base quaternion for each dot
+        dots.forEach(dot => { dot._calmBase = dot.group.quaternion.clone(); });
+      }
+      function stopCalm() {
+        if (!calmActive) return;
+        calmActive = false;
+        document.getElementById('btn-calm').classList.remove('active');
+        // Restore base quaternions
+        dots.forEach(dot => {
+          if (dot._calmBase) {
+            dot.group.quaternion.copy(dot._calmBase);
+            dot._calmBase = null;
+            dot._correctUV();
+          }
+        });
+      }
+      function updateCalm(time) {
+        if (!calmActive) return;
+        dots.forEach((dot, idx) => {
+          if (dot.flipping) return;
+          const base = dot._calmBase;
+          if (!base) return;
+          const phase = dot.col * 0.8 + dot.row * 1.1;
+          const angle = Math.sin(time * 1.0 + phase) * 0.04
+                      + Math.sin(time * 1.7 + phase * 0.6) * 0.02;
+          _calmQuat.setFromAxisAngle(_calmAxis, angle);
+          dot.group.quaternion.copy(base).multiply(_calmQuat);
+          dot._correctUV();
+        });
+      }
+
+      // Gust (突風): horizontal sweep, all dots flip at once
+      function triggerGust() {
         if (animating) return;
         animating = true;
+        stopBreeze();
+        stopCalm();
 
-        // Horizontal wind: left-to-right or right-to-left
         const windDir = Math.random() < 0.5 ? 1 : -1;
         const flipAxis = new THREE.Vector3(0, windDir, 0);
 
-        // Simple 2D value noise for per-dot jitter
+        // Each row starts at a slightly offset time
         function hash2(x, y) {
           let h = (x | 0) * 374761393 + (y | 0) * 668265263;
           h = (h ^ (h >> 13)) * 1274126177;
@@ -792,39 +813,33 @@
           return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
-        // Each row starts its horizontal sweep at a moderately different time.
-        // Use smooth noise so adjacent rows vary but aren't too extreme.
-        const rowNoiseSeed = Math.random() * 1000;
-        const rowStartOffset = new Map();
-        const maxRowOffset = params.flipDuration * 2 * 1000; // ~2 flip durations
+        const rowSeed = Math.random() * 1000;
+        const maxRowOff = params.flipDuration * 2 * 1000;
+        const rowOff = new Map();
         for (let r = 0; r < params.rows; r++) {
-          // noise2 @ scale 0.7 gives smooth transitions across adjacent rows
-          const n = noise2(r * 0.7 + rowNoiseSeed, rowNoiseSeed);
-          rowStartOffset.set(r, n * maxRowOffset);
+          rowOff.set(r, noise2(r * 0.7 + rowSeed, rowSeed) * maxRowOff);
         }
 
         const noiseSeed = Math.random() * 1000;
         let maxDelay = 0;
-
         dots.forEach((dot, idx) => {
           const colOrder = windDir > 0 ? dot.col : (params.cols - 1 - dot.col);
-          const rowStart = rowStartOffset.get(dot.row);
-          const baseDelay = rowStart + colOrder * params.lineDelay * 1000;
-          // Small per-dot noise jitter within the row
-          const jitter = noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 400;
-          const delay = baseDelay + jitter;
+          const delay = rowOff.get(dot.row)
+            + colOrder * params.lineDelay * 1000
+            + noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 400;
           if (delay > maxDelay) maxDelay = delay;
           pendingTimers.push(setTimeout(() => {
             dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
           }, delay));
         });
-
         pendingTimers.push(setTimeout(() => { animating = false; }, maxDelay + params.flipDuration * 2000));
       }
 
       function resetDots() {
         clearPendingTimers();
         animating = false;
+        stopBreeze();
+        stopCalm();
         mouseTrailMode = 'off';
         btnMouseTrail.textContent = 'Mouse Trail';
         clickRippleMode = false;
@@ -1034,8 +1049,13 @@
       document.getElementById('btn-seq-up').onclick = () => triggerSequence('up');
       document.getElementById('btn-seq-right').onclick = () => triggerSequence('right');
       document.getElementById('btn-seq-left').onclick = () => triggerSequence('left');
-      document.getElementById('btn-wind').onclick = () => triggerWind();
-      document.getElementById('btn-natural-wind').onclick = () => triggerNaturalWind();
+      document.getElementById('btn-breeze').onclick = () => {
+        breezeInterval ? stopBreeze() : startBreeze();
+      };
+      document.getElementById('btn-calm').onclick = () => {
+        calmActive ? stopCalm() : startCalm();
+      };
+      document.getElementById('btn-gust').onclick = () => triggerGust();
       btnClickRipple.onclick = () => {
         clickRippleMode = !clickRippleMode;
         btnClickRipple.classList.toggle('active', clickRippleMode);
@@ -1237,7 +1257,7 @@
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = '1-7:Anim 0:Reset A:GUI D:UI F:Fit ?:Help';
+      hint.textContent = '1-8:Anim 0:Reset A:GUI D:UI F:Fit ?:Help';
       gui.domElement.appendChild(hint);
 
       // --- Help ---
@@ -1258,8 +1278,9 @@
         '3': 'btn-seq-up',
         '4': 'btn-seq-right',
         '5': 'btn-seq-left',
-        '6': 'btn-wind',
-        '7': 'btn-natural-wind',
+        '6': 'btn-breeze',
+        '7': 'btn-calm',
+        '8': 'btn-gust',
         '0': 'btn-reset',
       };
       window.addEventListener('keydown', (e) => {
@@ -1293,7 +1314,9 @@
 
       function animate() {
         requestAnimationFrame(animate);
-        dots.forEach(dot => dot.update(clock.getElapsedTime()));
+        const elapsed = clock.getElapsedTime();
+        dots.forEach(dot => dot.update(elapsed));
+        updateCalm(elapsed);
         controls.update();
         renderer.render(scene, camera);
 
