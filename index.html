@@ -786,8 +786,9 @@
           const base = dot._calmBase;
           if (!base) return;
           const phase = dot.col * 0.8 + dot.row * 1.1;
-          const angle = Math.sin(time * 1.0 + phase) * 0.04
-                      + Math.sin(time * 1.7 + phase * 0.6) * 0.02;
+          const angle = Math.sin(time * 1.5 + phase) * 0.15
+                      + Math.sin(time * 2.3 + phase * 0.6) * 0.08
+                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05;
           _calmQuat.setFromAxisAngle(_calmAxis, angle);
           dot.group.quaternion.copy(base).multiply(_calmQuat);
           dot._correctUV();
