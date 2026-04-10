@@ -362,7 +362,18 @@
       const s = size * 2 * (gap ? 0.92 : 1.0);
       const d = size * 2 * squash;
       const geo = new THREE.BoxGeometry(s, s, d);
-      // Use default Three.js UVs (back face has x-mirrored UVs by design)
+      const uvs = geo.attributes.uv;
+      const pos = geo.attributes.position;
+      const R = s / 2;
+      // Remap back face (-Z, vertices 16-19 after +Z at 12-15 in some builds,
+      // but guaranteed to be the LAST 4 vertices: indices 20-23)
+      // Match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
+      // Verify by checking these vertices have z ≈ -d/2
+      for (let i = 20; i < 24; i++) {
+        const x = pos.getX(i), y = pos.getY(i);
+        uvs.setXY(i, (x / R + 1) / 2, (-y / R + 1) / 2);
+      }
+      uvs.needsUpdate = true;
       // Groups: 0=+X,1=-X,2=+Y,3=-Y (sides), 4=+Z (front), 5=-Z (back)
       geo.clearGroups();
       geo.addGroup(0, 24, 2);   // 4 side faces → material 2
@@ -488,27 +499,18 @@
       _correctUV() {
         _rotMat.makeRotationFromQuaternion(this.group.quaternion);
         const e = _rotMat.elements;
-        // Front face: UV u=(x/R+1)/2, v=(y/R+1)/2 (same for sphere and box)
+        // Front: u=(x/R+1)/2, v=(y/R+1)/2
         this.frontTex.matrix.set(
           e[0],  e[4], (1 - e[0] - e[4]) / 2,
           e[1],  e[5], (1 - e[1] - e[5]) / 2,
           0, 0, 1
         );
-        if (params.dotShape === 'square') {
-          // Box back face: default Three.js UV has x-mirrored: u=(-x/R+1)/2, v=(y/R+1)/2
-          this.backTex.matrix.set(
-            -e[0],  e[4], (e[0] - e[4] + 1) / 2,
-            -e[1],  e[5], (e[1] - e[5] + 1) / 2,
-            0, 0, 1
-          );
-        } else {
-          // Sphere back face: custom UV u=(x/R+1)/2, v=(-y/R+1)/2
-          this.backTex.matrix.set(
-            e[0], -e[4], (1 - e[0] + e[4]) / 2,
-            e[1], -e[5], (1 - e[1] + e[5]) / 2,
-            0, 0, 1
-          );
-        }
+        // Back: u=(x/R+1)/2, v=(-y/R+1)/2 (same convention for sphere and box)
+        this.backTex.matrix.set(
+          e[0], -e[4], (1 - e[0] + e[4]) / 2,
+          e[1], -e[5], (1 - e[1] + e[5]) / 2,
+          0, 0, 1
+        );
       }
 
       reset() {
