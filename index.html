@@ -362,19 +362,7 @@
       const s = size * 2 * (gap ? 0.92 : 1.0);
       const d = size * 2 * squash;
       const geo = new THREE.BoxGeometry(s, s, d);
-      const uvs = geo.attributes.uv;
-      const pos = geo.attributes.position;
-      const R = s / 2;
-      // Remap back face (-Z) UVs to match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
-      // Find back face vertices by z position (most negative z)
-      const halfD = d / 2;
-      for (let i = 0; i < pos.count; i++) {
-        if (Math.abs(pos.getZ(i) + halfD) < 0.001) {
-          // This vertex is on the back face (-Z)
-          uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
-        }
-      }
-      uvs.needsUpdate = true;
+      // Use default Three.js UVs (back face has x-mirrored UVs by design)
       // Groups: 0=+X,1=-X,2=+Y,3=-Y (sides), 4=+Z (front), 5=-Z (back)
       geo.clearGroups();
       geo.addGroup(0, 24, 2);   // 4 side faces → material 2
@@ -500,17 +488,27 @@
       _correctUV() {
         _rotMat.makeRotationFromQuaternion(this.group.quaternion);
         const e = _rotMat.elements;
-        // Update both faces every frame so texture tracks rotation
+        // Front face: UV u=(x/R+1)/2, v=(y/R+1)/2 (same for sphere and box)
         this.frontTex.matrix.set(
           e[0],  e[4], (1 - e[0] - e[4]) / 2,
           e[1],  e[5], (1 - e[1] - e[5]) / 2,
           0, 0, 1
         );
-        this.backTex.matrix.set(
-          e[0], -e[4], (1 - e[0] + e[4]) / 2,
-          e[1], -e[5], (1 - e[1] + e[5]) / 2,
-          0, 0, 1
-        );
+        if (params.dotShape === 'square') {
+          // Box back face: default Three.js UV has x-mirrored: u=(-x/R+1)/2, v=(y/R+1)/2
+          this.backTex.matrix.set(
+            -e[0],  e[4], (e[0] - e[4] + 1) / 2,
+            -e[1],  e[5], (e[1] - e[5] + 1) / 2,
+            0, 0, 1
+          );
+        } else {
+          // Sphere back face: custom UV u=(x/R+1)/2, v=(-y/R+1)/2
+          this.backTex.matrix.set(
+            e[0], -e[4], (1 - e[0] + e[4]) / 2,
+            e[1], -e[5], (1 - e[1] + e[5]) / 2,
+            0, 0, 1
+          );
+        }
       }
 
       reset() {
