@@ -827,8 +827,9 @@
           return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
         }
 
+        // Fast sweep with minimal row offset for forceful feel
         const rowSeed = Math.random() * 1000;
-        const maxRowOff = params.flipDuration * 2 * 1000;
+        const maxRowOff = params.flipDuration * 0.3 * 1000; // very small row offset
         const rowOff = new Map();
         for (let r = 0; r < params.rows; r++) {
           rowOff.set(r, noise2(r * 0.7 + rowSeed, rowSeed) * maxRowOff);
@@ -839,8 +840,8 @@
         dots.forEach((dot, idx) => {
           const colOrder = windDir > 0 ? dot.col : (params.cols - 1 - dot.col);
           const delay = rowOff.get(dot.row)
-            + colOrder * params.lineDelay * 1000
-            + noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 400;
+            + colOrder * params.lineDelay * 400  // 2.5x faster sweep
+            + noise2(dot.col * 0.4 + noiseSeed, dot.row * 0.6 + noiseSeed) * params.lineDelay * 100;
           if (delay > maxDelay) maxDelay = delay;
           pendingTimers.push(setTimeout(() => {
             dots[idx]?.startFlip(clock.getElapsedTime(), flipAxis, true);
