@@ -360,14 +360,19 @@
 
     function buildBoxGeo(size, squash, gap) {
       const s = size * 2 * (gap ? 0.92 : 1.0);
-      const geo = new THREE.BoxGeometry(s, s, size * 2 * squash);
-      // Remap back face (-Z) UVs to match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
-      // BoxGeometry: 4 verts per face, back face = vertices 20-23
+      const d = size * 2 * squash;
+      const geo = new THREE.BoxGeometry(s, s, d);
       const uvs = geo.attributes.uv;
       const pos = geo.attributes.position;
       const R = s / 2;
-      for (let i = 20; i < 24; i++) {
-        uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
+      // Remap back face (-Z) UVs to match sphere convention: u=(x/R+1)/2, v=(-y/R+1)/2
+      // Find back face vertices by z position (most negative z)
+      const halfD = d / 2;
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(pos.getZ(i) + halfD) < 0.001) {
+          // This vertex is on the back face (-Z)
+          uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
+        }
       }
       uvs.needsUpdate = true;
       // Groups: 0=+X,1=-X,2=+Y,3=-Y (sides), 4=+Z (front), 5=-Z (back)
@@ -479,12 +484,16 @@
         } else {
           eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         }
-        this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
-        this._correctUV();
         if (t >= 1) {
+          // Snap to exact target to avoid floating-point drift
+          this.group.quaternion.copy(this.targetQuat);
+          this._correctUV();
           this.flipping = false;
           this.showingFront = !this.showingFront;
           this.flutter = false;
+        } else {
+          this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
+          this._correctUV();
         }
       }
 
