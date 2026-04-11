@@ -241,6 +241,7 @@
       lineDelay: 0.04,
       trailRadius: 1.5,
       trailGradient: 0.03,
+      settleDuration: 3.0,
       dotShape: 'square',
       dotGap: false,
       trueColor: true,
@@ -390,8 +391,6 @@
     const _snapAxis = new THREE.Vector3();
     const _rotMat = new THREE.Matrix4();
 
-    const _imperfEuler = new THREE.Euler();
-
     class FlipDot {
       constructor(group, col, row, frontTex, backTex) {
         this.group = group;
@@ -406,14 +405,14 @@
         this.flipStartTime = 0;
         this.startQuat = new THREE.Quaternion();
         this.targetQuat = new THREE.Quaternion();
-        // Per-dot imperfection: slight random tilt so dots don't rest perfectly flat
-        _imperfEuler.set(
-          (Math.random() - 0.5) * 0.05,
-          (Math.random() - 0.5) * 0.05,
-          0
-        );
-        this.restOffset = new THREE.Quaternion().setFromEuler(_imperfEuler);
-        this.roughnessOffset = (Math.random() - 0.5) * 0.15; // per-dot roughness variation
+        this.roughnessOffset = 0;
+        // Per-dot motion wobble: random offset applied during flip animation only
+        // Per-dot settling (aftereffect sway after flip completes)
+        this.settling = false;
+        this.settleStartTime = 0;
+        this.settlePhase = Math.random() * Math.PI * 2;
+        this._settleAxis = new THREE.Vector3(0, 1, 0);
+        this._settleQuat = new THREE.Quaternion();
         // Disable auto UV matrix so we can control it for axis correction
         frontTex.matrixAutoUpdate = false;
         frontTex.matrix.identity();
@@ -424,7 +423,7 @@
       applyMaterial() {
         for (const mat of [this.frontMat, this.backMat]) {
           if (mat) {
-            mat.roughness = Math.max(0, Math.min(1, params.roughness + this.roughnessOffset));
+            mat.roughness = params.roughness;
             mat.metalness = params.metalness;
             if (params.trueColor) {
               mat.emissiveMap = mat.map;
@@ -454,10 +453,16 @@
 
       startFlip(time, axis, flutter = false) {
         if (this.flipping) return;
+        // Stop settling and snap to clean state before starting new flip
+        if (this.settling) {
+          this.settling = false;
+          this.group.quaternion.copy(this.targetQuat);
+        }
         this.flipping = true;
         this.flipStartTime = time;
         this.flutter = flutter;
-        this.startQuat.copy(this.group.quaternion);
+        // Use calm base (without oscillation) if calm is active, otherwise current quaternion
+        this.startQuat.copy(this._calmBase || this.group.quaternion);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
         if (params.dotShape === 'square') {
@@ -472,15 +477,33 @@
       }
 
       update(time) {
+        // Per-dot settling sway (uses own quaternion, no shared variables)
+        if (this.settling && !this.flipping) {
+          const settleElapsed = time - this.settleStartTime;
+          const settleDur = params.settleDuration;
+          if (settleElapsed >= settleDur) {
+            this.settling = false;
+            this.group.quaternion.copy(this.targetQuat);
+            this._correctUV();
+          } else {
+            const decay = 1 - settleElapsed / settleDur;
+            const smooth = decay * decay;
+            const angle = Math.sin(time * 2.0 + this.settlePhase) * 0.12 * smooth
+                        + Math.sin(time * 3.3 + this.settlePhase * 0.7) * 0.05 * smooth;
+            this._settleQuat.setFromAxisAngle(this._settleAxis, angle);
+            this.group.quaternion.copy(this.targetQuat).multiply(this._settleQuat);
+            this._correctUV();
+          }
+          return;
+        }
         if (!this.flipping) return;
         const elapsed = time - this.flipStartTime;
         const duration = this.flutter ? params.flipDuration * 1.6 : params.flipDuration;
         const t = Math.min(elapsed / duration, 1);
         let eased;
         if (this.flutter) {
-          // Overshoot to 1.1 then settle to 1.0 (single bump)
-          const tp = 0.75;   // time of peak
-          const over = 0.1;  // overshoot amount
+          const tp = 0.75;
+          const over = 0.1;
           if (t < tp) {
             const s = t / tp;
             eased = (1 + over) * (1 - Math.pow(1 - s, 2));
@@ -493,12 +516,15 @@
           eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         }
         if (t >= 1) {
-          // Snap to target + apply per-dot imperfection tilt
-          this.group.quaternion.copy(this.targetQuat).multiply(this.restOffset);
+          this.group.quaternion.copy(this.targetQuat);
           this._correctUV();
           this.flipping = false;
           this.showingFront = !this.showingFront;
           this.flutter = false;
+          if (this._calmBase) this._calmBase.copy(this.targetQuat);
+          // Start per-dot settling sway
+          this.settling = true;
+          this.settleStartTime = time;
         } else {
           this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
           this._correctUV();
@@ -524,9 +550,11 @@
 
       reset() {
         this.flipping = false;
+        this.settling = false;
         this.showingFront = true;
-        this.group.quaternion.copy(this.restOffset);
-        this._correctUV();
+        this.group.quaternion.identity();
+        this.frontTex.matrix.identity();
+        this.backTex.matrix.identity();
       }
 
       updateTexture(side, img) {
@@ -614,9 +642,6 @@
             dot.frontMat = frontMat;
             dot.backMat = backMat;
             dot.applyMaterial();
-            // Apply initial rest imperfection
-            dot.group.quaternion.copy(dot.restOffset);
-            dot._correctUV();
             dots.push(dot);
           }
         }
@@ -777,19 +802,33 @@
       }
 
       // Calm (凪): subtle sway without full flips
-      function startCalm() {
-        if (calmActive) return;
-        calmActive = true;
-        document.getElementById('btn-calm').classList.add('active');
+      let calmStartTime = 0;
+      const CALM_EASE_IN = 2.0; // seconds to ramp up to full amplitude
 
-        // Store base quaternion for each dot
-        dots.forEach(dot => { dot._calmBase = dot.group.quaternion.clone(); });
+      function startCalm() {
+        if (calmActive && !calmStopping) return;
+        if (calmStopping) { calmStopping = false; } // cancel stop, keep going
+        if (!calmActive) {
+          calmActive = true;
+          calmStartTime = clock.getElapsedTime();
+          dots.forEach(dot => { dot._calmBase = dot.group.quaternion.clone(); });
+        }
+        document.getElementById('btn-calm').classList.add('active');
       }
+      let calmStopping = false;
+      let calmStopTime = 0;
+      const CALM_EASE_OUT = 2.0;
+
       function stopCalm() {
-        if (!calmActive) return;
-        calmActive = false;
+        if (!calmActive || calmStopping) return;
+        calmStopping = true;
+        calmStopTime = clock.getElapsedTime();
         document.getElementById('btn-calm').classList.remove('active');
-        // Restore base quaternions
+      }
+
+      function finishCalmStop() {
+        calmActive = false;
+        calmStopping = false;
         dots.forEach(dot => {
           if (dot._calmBase) {
             dot.group.quaternion.copy(dot._calmBase);
@@ -800,15 +839,28 @@
       }
       function updateCalm(time) {
         if (!calmActive) return;
+        // Ease-in
+        const elapsedIn = time - calmStartTime;
+        const easeIn = Math.min(elapsedIn / CALM_EASE_IN, 1);
+        let eased = easeIn * easeIn * (3 - 2 * easeIn);
+        // Ease-out
+        if (calmStopping) {
+          const elapsedOut = time - calmStopTime;
+          const easeOut = Math.min(elapsedOut / CALM_EASE_OUT, 1);
+          const fadeOut = 1 - easeOut * easeOut * (3 - 2 * easeOut);
+          eased *= fadeOut;
+          if (easeOut >= 1) { finishCalmStop(); return; }
+        }
+
         dots.forEach((dot, idx) => {
           if (dot.flipping) return;
           const base = dot._calmBase;
           if (!base) return;
           const phase = dot.col * 0.8 + dot.row * 1.1;
-          const amp = 1.0 + dot.roughnessOffset * 2; // per-dot amplitude variation
+          const amp = 0.8 + Math.sin(dot.col * 1.3 + dot.row * 0.7) * 0.4;
           const angle = (Math.sin(time * 1.5 + phase) * 0.15
                       + Math.sin(time * 2.3 + phase * 0.6) * 0.08
-                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05) * amp;
+                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05) * amp * eased;
           _calmQuat.setFromAxisAngle(_calmAxis, angle);
           dot.group.quaternion.copy(base).multiply(_calmQuat);
           dot._correctUV();
@@ -819,8 +871,6 @@
       function triggerGust() {
         if (animating) return;
         animating = true;
-
-        stopCalm();
 
         const windDir = Math.random() < 0.5 ? 1 : -1;
         const flipAxis = new THREE.Vector3(0, windDir, 0);
@@ -1348,6 +1398,7 @@
       animFolder.add(params, 'lineDelay', 0.01, 0.3, 0.01).name('Line Delay');
       animFolder.add(params, 'trailRadius', 0.5, 5.0, 0.1).name('Trail Radius');
       animFolder.add(params, 'trailGradient', 0, 0.15, 0.005).name('Trail Gradient');
+      animFolder.add(params, 'settleDuration', 0, 10, 0.5).name('Settle Duration');
 
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
