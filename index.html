@@ -390,6 +390,8 @@
     const _snapAxis = new THREE.Vector3();
     const _rotMat = new THREE.Matrix4();
 
+    const _imperfEuler = new THREE.Euler();
+
     class FlipDot {
       constructor(group, col, row, frontTex, backTex) {
         this.group = group;
@@ -404,6 +406,14 @@
         this.flipStartTime = 0;
         this.startQuat = new THREE.Quaternion();
         this.targetQuat = new THREE.Quaternion();
+        // Per-dot imperfection: slight random tilt so dots don't rest perfectly flat
+        _imperfEuler.set(
+          (Math.random() - 0.5) * 0.05,
+          (Math.random() - 0.5) * 0.05,
+          0
+        );
+        this.restOffset = new THREE.Quaternion().setFromEuler(_imperfEuler);
+        this.roughnessOffset = (Math.random() - 0.5) * 0.15; // per-dot roughness variation
         // Disable auto UV matrix so we can control it for axis correction
         frontTex.matrixAutoUpdate = false;
         frontTex.matrix.identity();
@@ -414,7 +424,7 @@
       applyMaterial() {
         for (const mat of [this.frontMat, this.backMat]) {
           if (mat) {
-            mat.roughness = params.roughness;
+            mat.roughness = Math.max(0, Math.min(1, params.roughness + this.roughnessOffset));
             mat.metalness = params.metalness;
             if (params.trueColor) {
               mat.emissiveMap = mat.map;
@@ -483,8 +493,8 @@
           eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         }
         if (t >= 1) {
-          // Snap to exact target to avoid floating-point drift
-          this.group.quaternion.copy(this.targetQuat);
+          // Snap to target + apply per-dot imperfection tilt
+          this.group.quaternion.copy(this.targetQuat).multiply(this.restOffset);
           this._correctUV();
           this.flipping = false;
           this.showingFront = !this.showingFront;
@@ -515,9 +525,8 @@
       reset() {
         this.flipping = false;
         this.showingFront = true;
-        this.group.quaternion.identity();
-        this.frontTex.matrix.identity();
-        this.backTex.matrix.identity();
+        this.group.quaternion.copy(this.restOffset);
+        this._correctUV();
       }
 
       updateTexture(side, img) {
@@ -605,6 +614,9 @@
             dot.frontMat = frontMat;
             dot.backMat = backMat;
             dot.applyMaterial();
+            // Apply initial rest imperfection
+            dot.group.quaternion.copy(dot.restOffset);
+            dot._correctUV();
             dots.push(dot);
           }
         }
@@ -793,9 +805,10 @@
           const base = dot._calmBase;
           if (!base) return;
           const phase = dot.col * 0.8 + dot.row * 1.1;
-          const angle = Math.sin(time * 1.5 + phase) * 0.15
+          const amp = 1.0 + dot.roughnessOffset * 2; // per-dot amplitude variation
+          const angle = (Math.sin(time * 1.5 + phase) * 0.15
                       + Math.sin(time * 2.3 + phase * 0.6) * 0.08
-                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05;
+                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05) * amp;
           _calmQuat.setFromAxisAngle(_calmAxis, angle);
           dot.group.quaternion.copy(base).multiply(_calmQuat);
           dot._correctUV();
