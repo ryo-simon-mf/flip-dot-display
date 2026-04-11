@@ -125,6 +125,7 @@
     <button id="btn-reset" class="btn-sys">Reset</button>
     <button id="btn-shape" class="btn-sys">Shape: Square</button>
     <button id="btn-gap" class="btn-sys">Gap: Off</button>
+    <button id="btn-side" class="btn-sys">Side: White</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
     <button id="btn-bg" class="btn-sys">BG: Black</button>
     <button id="btn-truecolor" class="btn-sys">PBR Light</button>
@@ -233,7 +234,7 @@
       cols: 16,
       rows: 9,
       spacing: 1.5,
-      squash: 0.1,
+      squash: 0.01,
       roughness: 0.3,
       metalness: 0.1,
       flipDuration: 0.29,
@@ -241,9 +242,10 @@
       lineDelay: 0.04,
       trailRadius: 1.5,
       trailGradient: 0.03,
-      settleDuration: 3.0,
+      settleDuration: 1.5,
       dotShape: 'square',
       dotGap: false,
+      sideMatchBg: false,  // false=white, true=match background
       trueColor: true,
     };
     const CROP_SIZE = 256;
@@ -441,12 +443,13 @@
         if (sideMat) {
           sideMat.roughness = params.roughness;
           sideMat.metalness = params.metalness;
+          const sideColor = params.sideMatchBg ? scene.background.getHex() : 0xffffff;
           if (params.trueColor) {
-            sideMat.emissive.setHex(0xffffff);
+            sideMat.emissive.setHex(sideColor);
             sideMat.color.setHex(0x000000);
           } else {
             sideMat.emissive.setHex(0x000000);
-            sideMat.color.setHex(0xffffff);
+            sideMat.color.setHex(sideColor);
           }
         }
       }
@@ -1172,6 +1175,13 @@
         buildDots();
       };
 
+      const btnSide = document.getElementById('btn-side');
+      btnSide.onclick = () => {
+        params.sideMatchBg = !params.sideMatchBg;
+        btnSide.textContent = 'Side: ' + (params.sideMatchBg ? 'BG' : 'White');
+        dots.forEach(dot => dot.applyMaterial());
+      };
+
       const btnGlossy = document.getElementById('btn-glossy');
       btnGlossy.onclick = () => {
         const isGlossy = params.roughness < 0.15;
@@ -1192,6 +1202,14 @@
       function applyBgTheme(bg) {
         scene.background = new THREE.Color(bg.scene);
         document.body.style.background = bg.css;
+        // Update side material if linked to background
+        if (sideMat && params.sideMatchBg) {
+          if (params.trueColor) {
+            sideMat.emissive.setHex(bg.scene);
+          } else {
+            sideMat.color.setHex(bg.scene);
+          }
+        }
         btnBg.textContent = 'BG: ' + bg.name;
         // Switch UI colors for dark/light backgrounds
         const uiButtons = document.querySelectorAll('#ui button');
