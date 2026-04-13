@@ -923,11 +923,12 @@
           if (dot.flipping) return;
           const base = dot._calmBase;
           if (!base) return;
-          const phase = dot.col * 0.8 + dot.row * 1.1;
-          const amp = 0.8 + Math.sin(dot.col * 1.3 + dot.row * 0.7) * 0.4;
-          const angle = (Math.sin(time * 1.5 + phase) * 0.15
-                      + Math.sin(time * 2.3 + phase * 0.6) * 0.08
-                      + Math.sin(time * 0.7 + phase * 1.4) * 0.05) * amp * eased;
+          const rp = dot.settlePhase; // per-dot random offset
+          const phase = dot.col * 0.8 + dot.row * 1.1 + rp;
+          const amp = 0.7 + Math.sin(rp * 3.7) * 0.5;
+          const angle = (Math.sin(time * (1.3 + rp * 0.4) + phase) * 0.15
+                      + Math.sin(time * (2.1 + rp * 0.3) + phase * 0.6) * 0.08
+                      + Math.sin(time * (0.6 + rp * 0.2) + phase * 1.4) * 0.05) * amp * eased;
           _calmQuat.setFromAxisAngle(_calmAxis, angle);
           dot.group.quaternion.copy(base).multiply(_calmQuat);
           dot._correctUV();
