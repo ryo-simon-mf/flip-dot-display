@@ -157,6 +157,8 @@
         <tr><td><kbd>7</kbd></td><td>Calm (toggle)</td></tr>
         <tr><td><kbd>8</kbd></td><td>Gust</td></tr>
         <tr><td><kbd>0</kbd></td><td>Reset</td></tr>
+        <tr><td><kbd>Cmd+Z</kbd></td><td>Undo parameter change</td></tr>
+        <tr><td><kbd>Shift+Cmd+Z</kbd></td><td>Redo parameter change</td></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
       </table>
 
@@ -250,6 +252,42 @@
       trueColor: true,
     };
     const CROP_SIZE = 256;
+
+    // --- Undo/Redo History ---
+    const history = { stack: [], idx: -1, max: 100, applying: false };
+
+    function captureState() {
+      return JSON.stringify({ params: { ...params } });
+    }
+
+    function pushHistory() {
+      if (history.applying) return;
+      const state = captureState();
+      // Don't push if identical to current
+      if (history.idx >= 0 && history.stack[history.idx] === state) return;
+      // Truncate any redo states
+      history.stack.length = history.idx + 1;
+      history.stack.push(state);
+      if (history.stack.length > history.max) history.stack.shift();
+      history.idx = history.stack.length - 1;
+    }
+
+    function applyState(state) {
+      history.applying = true;
+      const saved = JSON.parse(state);
+      const gridChanged = saved.params.cols !== params.cols
+        || saved.params.rows !== params.rows
+        || saved.params.spacing !== params.spacing
+        || saved.params.squash !== params.squash
+        || saved.params.dotShape !== params.dotShape
+        || saved.params.dotGap !== params.dotGap;
+      Object.assign(params, saved.params);
+      history.applying = false;
+      return gridChanged;
+    }
+
+    // Initial state
+    pushHistory();
 
     // --- Scene setup ---
     const scene = new THREE.Scene();
@@ -1230,21 +1268,21 @@
       btnShape.onclick = () => {
         params.dotShape = params.dotShape === 'round' ? 'square' : 'round';
         btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
-        buildDots();
+        buildDots(); pushHistory();
       };
 
       const btnGap = document.getElementById('btn-gap');
       btnGap.onclick = () => {
         params.dotGap = !params.dotGap;
         btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
-        buildDots();
+        buildDots(); pushHistory();
       };
 
       const btnSide = document.getElementById('btn-side');
       btnSide.onclick = () => {
         params.sideMatchBg = !params.sideMatchBg;
         btnSide.textContent = 'Side: ' + (params.sideMatchBg ? 'BG' : 'White');
-        dots.forEach(dot => dot.applyMaterial());
+        dots.forEach(dot => dot.applyMaterial()); pushHistory();
       };
 
       const btnGlossy = document.getElementById('btn-glossy');
@@ -1254,6 +1292,7 @@
         btnGlossy.textContent = isGlossy ? 'Glossy' : 'Matte';
         dots.forEach(dot => dot.applyMaterial());
         gui.controllersRecursive().forEach(c => c.updateDisplay());
+        pushHistory();
       };
 
       const bgColors = [
@@ -1300,6 +1339,7 @@
         params.trueColor = !params.trueColor;
         btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
         dots.forEach(dot => dot.applyMaterial());
+        pushHistory();
       };
 
       function fitCamera() {
@@ -1454,21 +1494,21 @@
       camFolder.close();
 
       const gridFolder = gui.addFolder('Grid');
-      gridFolder.add(params, 'cols', 4, 96, 1).name('Columns').onFinishChange(buildDots);
-      gridFolder.add(params, 'rows', 4, 54, 1).name('Rows').onFinishChange(buildDots);
-      gridFolder.add(params, 'spacing', 0.5, 2.0, 0.05).name('Spacing').onFinishChange(buildDots);
-      gridFolder.add(params, 'squash', 0.01, 1.0, 0.01).name('Squash').onFinishChange(buildDots);
+      gridFolder.add(params, 'cols', 4, 96, 1).name('Columns').onFinishChange(() => { buildDots(); pushHistory(); });
+      gridFolder.add(params, 'rows', 4, 54, 1).name('Rows').onFinishChange(() => { buildDots(); pushHistory(); });
+      gridFolder.add(params, 'spacing', 0.5, 2.0, 0.05).name('Spacing').onFinishChange(() => { buildDots(); pushHistory(); });
+      gridFolder.add(params, 'squash', 0.01, 1.0, 0.01).name('Squash').onFinishChange(() => { buildDots(); pushHistory(); });
 
       const matFolder = gui.addFolder('Material');
       matFolder.add(params, 'roughness', 0, 1, 0.01).name('Roughness').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
-      });
+      }).onFinishChange(pushHistory);
       matFolder.add(params, 'metalness', 0, 1, 0.01).name('Metalness').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
-      });
+      }).onFinishChange(pushHistory);
       matFolder.add(params, 'shadeMix', 0, 1, 0.05).name('Shade Mix').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
-      });
+      }).onFinishChange(pushHistory);
 
       const lightFolder = gui.addFolder('Lighting');
       const lightParams = {
@@ -1548,7 +1588,38 @@
         '8': 'btn-gust',
         '0': 'btn-reset',
       };
+      // Helper to refresh all UI after undo/redo
+      function refreshUIFromParams() {
+        btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+        btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
+        btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
+        btnGlossy.textContent = params.roughness < 0.15 ? 'Matte' : 'Glossy';
+        btnSide.textContent = 'Side: ' + (params.sideMatchBg ? 'BG' : 'White');
+        gui.controllersRecursive().forEach(c => c.updateDisplay());
+      }
+
       window.addEventListener('keydown', (e) => {
+        // Cmd+Z (undo) / Shift+Cmd+Z (redo)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          if (history.idx > 0) {
+            history.idx--;
+            const gridChanged = applyState(history.stack[history.idx]);
+            if (gridChanged) buildDots(); else dots.forEach(d => d.applyMaterial());
+            refreshUIFromParams();
+          }
+          return;
+        }
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) {
+          e.preventDefault();
+          if (history.idx < history.stack.length - 1) {
+            history.idx++;
+            const gridChanged = applyState(history.stack[history.idx]);
+            if (gridChanged) buildDots(); else dots.forEach(d => d.applyMaterial());
+            refreshUIFromParams();
+          }
+          return;
+        }
         if (e.key === '?') { toggleHelp(); return; }
         if (numKeyMap[e.key]) {
           document.getElementById(numKeyMap[e.key]).click();
