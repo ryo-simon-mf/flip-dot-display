@@ -156,7 +156,7 @@
         <tr><td><kbd>6</kbd></td><td>Breeze</td></tr>
         <tr><td><kbd>7</kbd></td><td>Calm (toggle)</td></tr>
         <tr><td><kbd>8</kbd></td><td>Gust</td></tr>
-        <tr><td><kbd>0</kbd></td><td>Reset</td></tr>
+        <tr><td><kbd>0</kbd> / <kbd>R</kbd></td><td>Reset</td></tr>
         <tr><td><kbd>Cmd+Z</kbd></td><td>Undo parameter change</td></tr>
         <tr><td><kbd>Shift+Cmd+Z</kbd></td><td>Redo parameter change</td></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
@@ -1619,7 +1619,7 @@
       // Shortcuts hint below GUI
       const hint = document.createElement('div');
       hint.style.cssText = 'padding:6px 10px;font:11px monospace;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.3);border-radius:0 0 4px 4px;';
-      hint.textContent = '1-8:Anim 0:Reset A:GUI D:UI F:Fit ?:Help';
+      hint.textContent = '1-8:Anim 0/R:Reset A:GUI D:UI F:Fit ?:Help';
       gui.domElement.appendChild(hint);
 
       // --- Help ---
@@ -1690,6 +1690,9 @@
         }
         if (e.key === 'm' || e.key === 'M') {
           btnMouseTrail.click();
+        }
+        if (e.key === 'r' || e.key === 'R') {
+          document.getElementById('btn-reset').click();
         }
         if (e.key === 'd' || e.key === 'D') {
           const hidden = topUi.style.display === 'none';
