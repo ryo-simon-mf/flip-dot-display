@@ -246,6 +246,7 @@
       dotShape: 'square',
       dotGap: false,
       sideMatchBg: false,  // false=white, true=match background
+      shadeMix: 0,  // 0=pure True Color (unlit), 1=full PBR (lit)
       trueColor: true,
     };
     const CROP_SIZE = 256;
@@ -260,6 +261,8 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -279,6 +282,22 @@
     const backLight = new THREE.DirectionalLight(0xffffff, 0.25);
     backLight.position.set(-5, -5, -10);
     scene.add(backLight);
+
+    // Shadow light: positioned above and in front, casts shadows downward
+    const shadowLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    shadowLight.position.set(0, 10, 0.5);
+    shadowLight.castShadow = true;
+    shadowLight.shadow.mapSize.width = 4096;
+    shadowLight.shadow.mapSize.height = 4096;
+    shadowLight.shadow.camera.left = -20;
+    shadowLight.shadow.camera.right = 20;
+    shadowLight.shadow.camera.top = 12;
+    shadowLight.shadow.camera.bottom = -12;
+    shadowLight.shadow.camera.near = 0.1;
+    shadowLight.shadow.camera.far = 30;
+    shadowLight.shadow.bias = -0.0005;
+    shadowLight.shadow.normalBias = 0.02;
+    scene.add(shadowLight);
 
     // --- Texture helpers ---
     function createCropCanvas(img, col, row, flipH) {
@@ -308,6 +327,17 @@
       tex.magFilter = THREE.LinearFilter;
       tex.generateMipmaps = false;
       return tex;
+    }
+
+    function getFirstRowColor(canvas) {
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, 1).data;
+      let r = 0, g = 0, b = 0;
+      const n = canvas.width;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i]; g += data[i + 1]; b += data[i + 2];
+      }
+      return new THREE.Color(r / n / 255, g / n / 255, b / n / 255);
     }
 
     function loadImage(src) {
@@ -402,6 +432,10 @@
         this.backTex = backTex;
         this.frontMat = null;
         this.backMat = null;
+        this.sideMat = null;
+        // Side colors derived from opposite face's first row pixels
+        this.frontSideColor = new THREE.Color(0xffffff);
+        this.backSideColor = new THREE.Color(0xffffff);
         this.showingFront = true;
         this.flipping = false;
         this.flipStartTime = 0;
@@ -422,16 +456,38 @@
         backTex.matrix.identity();
       }
 
+      computeSideColors() {
+        // Front side color = back image's first row (what you see on the side when front is showing)
+        if (this.backTex.image) this.backSideColor = getFirstRowColor(this.backTex.image);
+        // Back side color = front image's first row
+        if (this.frontTex.image) this.frontSideColor = getFirstRowColor(this.frontTex.image);
+        this.updateSideColor();
+      }
+
+      updateSideColor() {
+        if (!this.sideMat) return;
+        const color = this.showingFront ? this.backSideColor : this.frontSideColor;
+        if (params.trueColor) {
+          const mix = params.shadeMix;
+          this.sideMat.emissive.copy(color).multiplyScalar(1 - mix);
+          this.sideMat.color.copy(color).multiplyScalar(mix);
+        } else {
+          this.sideMat.emissive.setHex(0x000000);
+          this.sideMat.color.copy(color);
+        }
+      }
+
       applyMaterial() {
         for (const mat of [this.frontMat, this.backMat]) {
           if (mat) {
             mat.roughness = params.roughness;
             mat.metalness = params.metalness;
             if (params.trueColor) {
+              const mix = params.shadeMix;
               mat.emissiveMap = mat.map;
-              mat.emissive.setHex(0xffffff);
+              mat.emissive.setRGB(1 - mix, 1 - mix, 1 - mix);
               mat.emissiveIntensity = 1.0;
-              mat.color.setHex(0x000000);
+              mat.color.setRGB(mix, mix, mix);
             } else {
               mat.emissiveMap = null;
               mat.emissive.setHex(0x000000);
@@ -443,13 +499,11 @@
         if (sideMat) {
           sideMat.roughness = params.roughness;
           sideMat.metalness = params.metalness;
-          const sideColor = params.sideMatchBg ? scene.background.getHex() : 0xffffff;
-          if (params.trueColor) {
-            sideMat.emissive.setHex(sideColor);
-            sideMat.color.setHex(0x000000);
-          } else {
-            sideMat.emissive.setHex(0x000000);
-            sideMat.color.setHex(sideColor);
+          if (this.sideMat) {
+            this.sideMat.roughness = params.roughness;
+            this.sideMat.metalness = params.metalness;
+            this.updateSideColor();
+            this.sideMat.needsUpdate = true;
           }
         }
       }
@@ -523,6 +577,7 @@
           this._correctUV();
           this.flipping = false;
           this.showingFront = !this.showingFront;
+          this.updateSideColor();
           this.flutter = false;
           if (this._calmBase) this._calmBase.copy(this.targetQuat);
           // Start per-dot settling sway
@@ -569,19 +624,20 @@
           this.backTex.image = canvas;
           this.backTex.needsUpdate = true;
         }
+        this.computeSideColors();
       }
     }
 
     // --- Main ---
     async function init() {
       let [img1, img2] = await Promise.all([
-        loadImage('images/image1.png'),
-        loadImage('images/image2.png')
+        loadImage('images/th_1.jpeg'),
+        loadImage('images/th_2.jpeg')
       ]);
 
-      document.getElementById('thumb-front').src = 'images/image1.png';
+      document.getElementById('thumb-front').src = 'images/th_1.jpeg';
       document.getElementById('thumb-front').classList.remove('empty');
-      document.getElementById('thumb-back').src = 'images/image2.png';
+      document.getElementById('thumb-back').src = 'images/th_2.jpeg';
       document.getElementById('thumb-back').classList.remove('empty');
 
       let dots = [];
@@ -599,6 +655,7 @@
         dots.forEach(d => {
           if (d.frontMat) { d.frontMat.map?.dispose(); d.frontMat.dispose(); }
           if (d.backMat) { d.backMat.map?.dispose(); d.backMat.dispose(); }
+          if (d.sideMat) { d.sideMat.dispose(); }
           scene.remove(d.group);
         });
         dots = [];
@@ -610,10 +667,7 @@
           ? buildBoxGeo(params.spacing / 2, params.squash, params.dotGap)
           : buildStoneGeo(params.spacing / 2, params.squash, params.dotGap);
 
-        if (sideMat) sideMat.dispose();
-        sideMat = isBox
-          ? new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: params.roughness, metalness: params.metalness })
-          : null;
+        sideMat = null; // no longer shared, per-dot
 
         const offsetX = (params.cols - 1) * params.spacing / 2;
         const offsetY = (params.rows - 1) * params.spacing / 2;
@@ -630,8 +684,16 @@
               map: backTex, roughness: params.roughness, metalness: params.metalness
             });
 
-            const mats = isBox ? [frontMat, backMat, sideMat] : [frontMat, backMat];
+            let dotSideMat = null;
+            if (isBox) {
+              dotSideMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff, roughness: params.roughness, metalness: params.metalness
+              });
+            }
+            const mats = isBox ? [frontMat, backMat, dotSideMat] : [frontMat, backMat];
             const stoneMesh = new THREE.Mesh(stoneGeo, mats);
+            stoneMesh.castShadow = true;
+            stoneMesh.receiveShadow = true;
 
             const group = new THREE.Group();
             group.add(stoneMesh);
@@ -644,6 +706,8 @@
             const dot = new FlipDot(group, col, row, frontTex, backTex);
             dot.frontMat = frontMat;
             dot.backMat = backMat;
+            dot.sideMat = dotSideMat;
+            dot.computeSideColors();
             dot.applyMaterial();
             dots.push(dot);
           }
@@ -1202,14 +1266,8 @@
       function applyBgTheme(bg) {
         scene.background = new THREE.Color(bg.scene);
         document.body.style.background = bg.css;
-        // Update side material if linked to background
-        if (sideMat && params.sideMatchBg) {
-          if (params.trueColor) {
-            sideMat.emissive.setHex(bg.scene);
-          } else {
-            sideMat.color.setHex(bg.scene);
-          }
-        }
+        // Update per-dot side materials
+        dots.forEach(dot => dot.updateSideColor());
         btnBg.textContent = 'BG: ' + bg.name;
         // Switch UI colors for dark/light backgrounds
         const uiButtons = document.querySelectorAll('#ui button');
@@ -1305,9 +1363,11 @@
           version: 1,
           params: { ...params },
           camera: {
+            fov: camera.fov,
             position: camera.position.toArray(),
             target: controls.target.toArray(),
           },
+          lighting: { ...lightParams },
           bgIdx,
         };
         const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' });
@@ -1344,7 +1404,16 @@
               bgIdx = preset.bgIdx % bgColors.length;
               applyBgTheme(bgColors[bgIdx]);
             }
+            if (preset.lighting) {
+              Object.assign(lightParams, preset.lighting);
+              updateLight();
+              lightFolder.controllersRecursive().forEach(c => c.updateDisplay());
+            }
             if (preset.camera) {
+              if (preset.camera.fov) {
+                camera.fov = preset.camera.fov;
+                camera.updateProjectionMatrix();
+              }
               camera.position.fromArray(preset.camera.position);
               controls.target.fromArray(preset.camera.target);
               controls.update();
@@ -1365,17 +1434,38 @@
       const fpsData = { fps: '0' };
       gui.add(fpsData, 'fps').name('FPS').disable();
 
+      const camFolder = gui.addFolder('Camera');
+      const camData = {
+        fov: camera.fov,
+        posX: '0', posY: '0', posZ: '0',
+        tgtX: '0', tgtY: '0', tgtZ: '0',
+      };
+      camFolder.add(camData, 'fov', 10, 120, 1).name('FOV').onChange(v => {
+        camera.fov = v;
+        camera.updateProjectionMatrix();
+      });
+      const camPosX = camFolder.add(camData, 'posX').name('Pos X').disable();
+      const camPosY = camFolder.add(camData, 'posY').name('Pos Y').disable();
+      const camPosZ = camFolder.add(camData, 'posZ').name('Pos Z').disable();
+      const camTgtX = camFolder.add(camData, 'tgtX').name('Target X').disable();
+      const camTgtY = camFolder.add(camData, 'tgtY').name('Target Y').disable();
+      const camTgtZ = camFolder.add(camData, 'tgtZ').name('Target Z').disable();
+      camFolder.close();
+
       const gridFolder = gui.addFolder('Grid');
       gridFolder.add(params, 'cols', 4, 96, 1).name('Columns').onFinishChange(buildDots);
       gridFolder.add(params, 'rows', 4, 54, 1).name('Rows').onFinishChange(buildDots);
       gridFolder.add(params, 'spacing', 0.5, 2.0, 0.05).name('Spacing').onFinishChange(buildDots);
-      gridFolder.add(params, 'squash', 0.1, 1.0, 0.05).name('Squash').onFinishChange(buildDots);
+      gridFolder.add(params, 'squash', 0.01, 1.0, 0.01).name('Squash').onFinishChange(buildDots);
 
       const matFolder = gui.addFolder('Material');
       matFolder.add(params, 'roughness', 0, 1, 0.01).name('Roughness').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
       });
       matFolder.add(params, 'metalness', 0, 1, 0.01).name('Metalness').onChange(() => {
+        dots.forEach(dot => dot.applyMaterial());
+      });
+      matFolder.add(params, 'shadeMix', 0, 1, 0.05).name('Shade Mix').onChange(() => {
         dots.forEach(dot => dot.applyMaterial());
       });
 
@@ -1390,6 +1480,10 @@
         sideZ: sideLight.position.z,
         sideInt: sideLight.intensity,
         ambientInt: 0.35,
+        shadowX: shadowLight.position.x,
+        shadowY: shadowLight.position.y,
+        shadowZ: shadowLight.position.z,
+        shadowInt: shadowLight.intensity,
       };
       const ambientLight = scene.children.find(c => c.isAmbientLight);
       function updateLight() {
@@ -1398,6 +1492,8 @@
         sideLight.position.set(lightParams.sideX, lightParams.sideY, lightParams.sideZ);
         sideLight.intensity = lightParams.sideInt;
         if (ambientLight) ambientLight.intensity = lightParams.ambientInt;
+        shadowLight.position.set(lightParams.shadowX, lightParams.shadowY, lightParams.shadowZ);
+        shadowLight.intensity = lightParams.shadowInt;
       }
       lightFolder.add(lightParams, 'ambientInt', 0, 2, 0.05).name('Ambient').onChange(updateLight);
       lightFolder.add(lightParams, 'mainInt', 0, 3, 0.1).name('Main Intensity').onChange(updateLight);
@@ -1408,6 +1504,10 @@
       lightFolder.add(lightParams, 'sideX', -30, 30, 1).name('Side X').onChange(updateLight);
       lightFolder.add(lightParams, 'sideY', -30, 30, 1).name('Side Y').onChange(updateLight);
       lightFolder.add(lightParams, 'sideZ', -30, 30, 1).name('Side Z').onChange(updateLight);
+      lightFolder.add(lightParams, 'shadowInt', 0, 2, 0.05).name('Shadow Intensity').onChange(updateLight);
+      lightFolder.add(lightParams, 'shadowX', -20, 20, 0.5).name('Shadow X').onChange(updateLight);
+      lightFolder.add(lightParams, 'shadowY', -20, 20, 0.5).name('Shadow Y').onChange(updateLight);
+      lightFolder.add(lightParams, 'shadowZ', -10, 10, 0.5).name('Shadow Z').onChange(updateLight);
       lightFolder.close();
 
       const animFolder = gui.addFolder('Animation');
@@ -1492,6 +1592,15 @@
           frameCount = 0;
           lastFpsTime = now;
           if (fpsCtrl) fpsCtrl.updateDisplay();
+          // Update camera info
+          camData.posX = camera.position.x.toFixed(2);
+          camData.posY = camera.position.y.toFixed(2);
+          camData.posZ = camera.position.z.toFixed(2);
+          camData.tgtX = controls.target.x.toFixed(2);
+          camData.tgtY = controls.target.y.toFixed(2);
+          camData.tgtZ = controls.target.z.toFixed(2);
+          camData.fov = camera.fov;
+          [camPosX,camPosY,camPosZ,camTgtX,camTgtY,camTgtZ].forEach(c=>c.updateDisplay());
         }
       }
       animate();
