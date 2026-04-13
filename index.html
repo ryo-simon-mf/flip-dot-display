@@ -453,14 +453,14 @@
     }
 
     function buildBevelGeo(size, squash, gap) {
-      const s = size * 2 * (gap ? 0.92 : 1.0);
+      const s = size * 2 * (gap ? 0.96 : 1.0);
       const d = size * 2 * squash;
-      const seg = 8; // enough segments for smooth rounding
+      const seg = 16;
       const geo = new THREE.BoxGeometry(s, s, d, seg, seg, 1);
       const pos = geo.attributes.position;
       const uvs = geo.attributes.uv;
       const R = s / 2;
-      const chamfer = R * 0.35;
+      const chamfer = R * 0.15; // smaller corner diamonds
 
       // Round XY corners on ALL vertices
       for (let i = 0; i < pos.count; i++) {
