@@ -177,7 +177,7 @@
       <h3>Control Buttons</h3>
       <table>
         <tr><td>Reset</td><td>Reset all dots to front face, cancel animations</td></tr>
-        <tr><td>Shape</td><td>Toggle dot shape: Round (spheroid) / Square (box)</td></tr>
+        <tr><td>Shape</td><td>Cycle dot shape: Square / Bevel / Round</td></tr>
         <tr><td>Gap</td><td>Toggle gap between dots: On (spaced) / Off (tight)</td></tr>
         <tr><td>Glossy</td><td>Toggle surface finish: Matte / Glossy</td></tr>
         <tr><td>BG</td><td>Cycle background color: White / Black / Gray</td></tr>
@@ -452,6 +452,57 @@
       return geo;
     }
 
+    function buildBevelGeo(size, squash, gap) {
+      const s = size * 2 * (gap ? 0.92 : 1.0);
+      const d = size * 2 * squash;
+      const seg = 8; // enough segments for smooth rounding
+      const geo = new THREE.BoxGeometry(s, s, d, seg, seg, 1);
+      const pos = geo.attributes.position;
+      const uvs = geo.attributes.uv;
+      const R = s / 2;
+      const chamfer = R * 0.35;
+
+      // Round XY corners on ALL vertices
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = pos.getY(i);
+        const dx = Math.abs(x) - (R - chamfer);
+        const dy = Math.abs(y) - (R - chamfer);
+        if (dx > 0 && dy > 0) {
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 0) {
+            const scale = Math.min(chamfer / dist, 1);
+            pos.setX(i, Math.sign(x) * ((R - chamfer) + dx * scale));
+            pos.setY(i, Math.sign(y) * ((R - chamfer) + dy * scale));
+          }
+        }
+      }
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+
+      // Vertex layout: +X, -X, +Y, -Y faces have (seg+1)*2 verts each
+      // +Z, -Z faces have (seg+1)*(seg+1) verts each
+      const sideVertsPerFace = (seg + 1) * 2;
+      const faceVerts = (seg + 1) * (seg + 1);
+      const backStart = 4 * sideVertsPerFace + faceVerts; // after sides + front
+
+      // Remap back face UVs
+      for (let i = backStart; i < backStart + faceVerts; i++) {
+        uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
+      }
+      uvs.needsUpdate = true;
+
+      // Groups: sides then front then back
+      const sideIdxPerFace = seg * 1 * 2 * 3;  // seg*dSeg*2 tris * 3
+      const faceIdx = seg * seg * 2 * 3;        // seg*seg*2 tris * 3
+      const sideTotal = 4 * sideIdxPerFace;
+
+      geo.clearGroups();
+      geo.addGroup(0, sideTotal, 2);
+      geo.addGroup(sideTotal, faceIdx, 0);
+      geo.addGroup(sideTotal + faceIdx, faceIdx, 1);
+      return geo;
+    }
+
     let stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
     let sideMat = null; // shared side material for box shape
 
@@ -560,7 +611,7 @@
         this.startQuat.copy(this._calmBase || this.group.quaternion);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
-        if (params.dotShape === 'square') {
+        if (params.dotShape === 'square' || params.dotShape === 'bevel') {
           if (Math.abs(axis.x) >= Math.abs(axis.y)) {
             flipAxis = _snapAxis.set(axis.x >= 0 ? 1 : -1, 0, 0);
           } else {
@@ -700,10 +751,13 @@
         animating = false;
 
         if (stoneGeo) stoneGeo.dispose();
-        const isBox = params.dotShape === 'square';
-        stoneGeo = isBox
-          ? buildBoxGeo(params.spacing / 2, params.squash, params.dotGap)
-          : buildStoneGeo(params.spacing / 2, params.squash, params.dotGap);
+        const hasSides = params.dotShape !== 'round';
+        if (params.dotShape === 'square')
+          stoneGeo = buildBoxGeo(params.spacing / 2, params.squash, params.dotGap);
+        else if (params.dotShape === 'bevel')
+          stoneGeo = buildBevelGeo(params.spacing / 2, params.squash, params.dotGap);
+        else
+          stoneGeo = buildStoneGeo(params.spacing / 2, params.squash, params.dotGap);
 
         sideMat = null; // no longer shared, per-dot
 
@@ -723,12 +777,12 @@
             });
 
             let dotSideMat = null;
-            if (isBox) {
+            if (hasSides) {
               dotSideMat = new THREE.MeshStandardMaterial({
                 color: 0xffffff, roughness: params.roughness, metalness: params.metalness
               });
             }
-            const mats = isBox ? [frontMat, backMat, dotSideMat] : [frontMat, backMat];
+            const mats = hasSides ? [frontMat, backMat, dotSideMat] : [frontMat, backMat];
             const stoneMesh = new THREE.Mesh(stoneGeo, mats);
             stoneMesh.castShadow = true;
             stoneMesh.receiveShadow = true;
@@ -1265,9 +1319,12 @@
       document.getElementById('btn-reset').onclick = () => resetDots();
 
       const btnShape = document.getElementById('btn-shape');
+      const shapeOrder = ['square', 'bevel', 'round'];
+      const shapeLabels = { square: 'Square', bevel: 'Bevel', round: 'Round' };
       btnShape.onclick = () => {
-        params.dotShape = params.dotShape === 'round' ? 'square' : 'round';
-        btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+        const idx = (shapeOrder.indexOf(params.dotShape) + 1) % shapeOrder.length;
+        params.dotShape = shapeOrder[idx];
+        btnShape.textContent = 'Shape: ' + shapeLabels[params.dotShape];
         buildDots(); pushHistory();
       };
 
@@ -1432,7 +1489,7 @@
             if (preset.params) {
               Object.assign(params, preset.params);
               // Reflect in buttons
-              btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+              btnShape.textContent = 'Shape: ' + (shapeLabels[params.dotShape] || params.dotShape);
               btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
               btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
               btnGlossy.textContent = params.roughness < 0.15 ? 'Matte' : 'Glossy';
@@ -1590,7 +1647,7 @@
       };
       // Helper to refresh all UI after undo/redo
       function refreshUIFromParams() {
-        btnShape.textContent = 'Shape: ' + (params.dotShape === 'round' ? 'Round' : 'Square');
+        btnShape.textContent = 'Shape: ' + (shapeLabels[params.dotShape] || params.dotShape);
         btnGap.textContent = 'Gap: ' + (params.dotGap ? 'On' : 'Off');
         btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
         btnGlossy.textContent = params.roughness < 0.15 ? 'Matte' : 'Glossy';
