@@ -43,20 +43,24 @@
 
     #ui {
       position: fixed;
-      bottom: 20px;
+      bottom: 16px;
       left: 50%;
       transform: translateX(-50%);
       display: flex;
-      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 6px;
+      max-width: calc(100vw - 80px);
       z-index: 10;
     }
     #ui button {
-      padding: 10px 24px;
+      padding: 6px 12px;
       border: 1px solid rgba(255,255,255,0.3);
       color: #fff;
-      border-radius: 8px;
+      border-radius: 6px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 12px;
+      white-space: nowrap;
       backdrop-filter: blur(10px);
       transition: background 0.2s, border-color 0.2s;
     }
@@ -119,7 +123,7 @@
     <button id="btn-seq-left" class="btn-anim">Left</button>
     <button id="btn-breeze" class="btn-anim">Breeze</button>
     <button id="btn-calm" class="btn-anim">Calm</button>
-    <button id="btn-calm2" class="btn-anim">Calm2</button>
+    <button id="btn-calm2" class="btn-anim">Sway</button>
     <button id="btn-gust" class="btn-anim">Gust</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
@@ -531,6 +535,8 @@
         this.flipStartTime = 0;
         this.startQuat = new THREE.Quaternion();
         this.targetQuat = new THREE.Quaternion();
+        // 純粋なフリップ/セトリング結果を保持（Calm/Calm2揺れを含まない）
+        this.naturalQuat = new THREE.Quaternion();
         this.roughnessOffset = 0;
         // Per-dot motion wobble: random offset applied during flip animation only
         // Per-dot settling (aftereffect sway after flip completes)
@@ -603,13 +609,13 @@
         // Stop settling and snap to clean state before starting new flip
         if (this.settling) {
           this.settling = false;
-          this.group.quaternion.copy(this.targetQuat);
+          this.naturalQuat.copy(this.targetQuat);
         }
         this.flipping = true;
         this.flipStartTime = time;
         this.flutter = flutter;
-        // Use calm/calm2 base (without oscillation) if active, otherwise current quaternion
-        this.startQuat.copy(this._calmBase || this._calm2Base || this.group.quaternion);
+        // natural 状態（揺れを含まない）を起点にする
+        this.startQuat.copy(this.naturalQuat);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
         if (params.dotShape === 'square' || params.dotShape === 'bevel') {
@@ -624,60 +630,61 @@
       }
 
       update(time) {
-        // Per-dot settling sway (uses own quaternion, no shared variables)
+        // naturalQuat を更新し、group.quaternion に反映（Calm/Calm2はこの上に加算）
         if (this.settling && !this.flipping) {
           const settleElapsed = time - this.settleStartTime;
           const settleDur = params.settleDuration;
           if (settleElapsed >= settleDur) {
             this.settling = false;
-            this.group.quaternion.copy(this.targetQuat);
-            this._correctUV();
+            this.naturalQuat.copy(this.targetQuat);
           } else {
             const decay = 1 - settleElapsed / settleDur;
             const smooth = decay * decay;
             const angle = Math.sin(time * 2.0 + this.settlePhase) * 0.12 * smooth
                         + Math.sin(time * 3.3 + this.settlePhase * 0.7) * 0.05 * smooth;
             this._settleQuat.setFromAxisAngle(this._settleAxis, angle);
-            this.group.quaternion.copy(this.targetQuat).multiply(this._settleQuat);
-            this._correctUV();
+            this.naturalQuat.copy(this.targetQuat).multiply(this._settleQuat);
           }
+          this.group.quaternion.copy(this.naturalQuat);
+          this._correctUV();
           return;
         }
-        if (!this.flipping) return;
-        const elapsed = time - this.flipStartTime;
-        const duration = this.flutter ? params.flipDuration * 1.6 : params.flipDuration;
-        const t = Math.min(elapsed / duration, 1);
-        let eased;
-        if (this.flutter) {
-          const tp = 0.75;
-          const over = 0.1;
-          if (t < tp) {
-            const s = t / tp;
-            eased = (1 + over) * (1 - Math.pow(1 - s, 2));
+        if (this.flipping) {
+          const elapsed = time - this.flipStartTime;
+          const duration = this.flutter ? params.flipDuration * 1.6 : params.flipDuration;
+          const t = Math.min(elapsed / duration, 1);
+          let eased;
+          if (this.flutter) {
+            const tp = 0.75;
+            const over = 0.1;
+            if (t < tp) {
+              const s = t / tp;
+              eased = (1 + over) * (1 - Math.pow(1 - s, 2));
+            } else {
+              const s = (t - tp) / (1 - tp);
+              const smooth = s * s * (3 - 2 * s);
+              eased = (1 + over) - over * smooth;
+            }
           } else {
-            const s = (t - tp) / (1 - tp);
-            const smooth = s * s * (3 - 2 * s);
-            eased = (1 + over) - over * smooth;
+            eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
           }
-        } else {
-          eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        }
-        if (t >= 1) {
-          this.group.quaternion.copy(this.targetQuat);
+          if (t >= 1) {
+            this.naturalQuat.copy(this.targetQuat);
+            this.flipping = false;
+            this.showingFront = !this.showingFront;
+            this.updateSideColor();
+            this.flutter = false;
+            this.settling = true;
+            this.settleStartTime = time;
+          } else {
+            this.naturalQuat.slerpQuaternions(this.startQuat, this.targetQuat, eased);
+          }
+          this.group.quaternion.copy(this.naturalQuat);
           this._correctUV();
-          this.flipping = false;
-          this.showingFront = !this.showingFront;
-          this.updateSideColor();
-          this.flutter = false;
-          if (this._calmBase) this._calmBase.copy(this.targetQuat);
-          if (this._calm2Base) this._calm2Base.copy(this.targetQuat);
-          // Start per-dot settling sway
-          this.settling = true;
-          this.settleStartTime = time;
-        } else {
-          this.group.quaternion.slerpQuaternions(this.startQuat, this.targetQuat, eased);
-          this._correctUV();
+          return;
         }
+        // 停止中: natural を group に反映（Calm/Calm2 が後で加算する基準）
+        this.group.quaternion.copy(this.naturalQuat);
       }
 
       _correctUV() {
@@ -701,6 +708,8 @@
         this.flipping = false;
         this.settling = false;
         this.showingFront = true;
+        this.naturalQuat.identity();
+        this.targetQuat.identity();
         this.group.quaternion.identity();
         this.frontTex.matrix.identity();
         this.backTex.matrix.identity();
@@ -966,68 +975,47 @@
       let calmStartTime = 0;
       const CALM_EASE_IN = 2.0; // seconds to ramp up to full amplitude
 
-      function startCalm() {
-        if (calmActive && !calmStopping) return;
-        if (calmStopping) { calmStopping = false; } // cancel stop, keep going
-        if (!calmActive) {
-          calmActive = true;
-          calmStartTime = clock.getElapsedTime();
-          dots.forEach(dot => { dot._calmBase = dot.group.quaternion.clone(); });
-        }
-        document.getElementById('btn-calm').classList.add('active');
-      }
       let calmStopping = false;
       let calmStopTime = 0;
       const CALM_EASE_OUT = 0.6;
 
+      function startCalm() {
+        if (calmActive && !calmStopping) return;
+        if (calmStopping) { calmStopping = false; }
+        if (!calmActive) {
+          calmActive = true;
+          calmStartTime = clock.getElapsedTime();
+        }
+        document.getElementById('btn-calm').classList.add('active');
+      }
       function stopCalm() {
         if (!calmActive || calmStopping) return;
         calmStopping = true;
         calmStopTime = clock.getElapsedTime();
         document.getElementById('btn-calm').classList.remove('active');
       }
-
-      function finishCalmStop() {
-        calmActive = false;
-        calmStopping = false;
-        dots.forEach(dot => {
-          const base = dot._calmBase;
-          if (base) {
-            if (!dot.flipping) {
-              dot.group.quaternion.copy(base);
-              dot._correctUV();
-            }
-            dot._calmBase = null;
-          }
-        });
-      }
       function updateCalm(time) {
         if (!calmActive) return;
-        // Ease-in
         const elapsedIn = time - calmStartTime;
         const easeIn = Math.min(elapsedIn / CALM_EASE_IN, 1);
         let eased = easeIn * easeIn * (3 - 2 * easeIn);
-        // Ease-out
         if (calmStopping) {
           const elapsedOut = time - calmStopTime;
           const easeOut = Math.min(elapsedOut / CALM_EASE_OUT, 1);
           const fadeOut = 1 - easeOut * easeOut * (3 - 2 * easeOut);
           eased *= fadeOut;
-          if (easeOut >= 1) { finishCalmStop(); return; }
+          if (easeOut >= 1) { calmActive = false; calmStopping = false; return; }
         }
-
-        dots.forEach((dot, idx) => {
-          if (dot.flipping) return;
-          const base = dot._calmBase;
-          if (!base) return;
-          const rp = dot.settlePhase; // per-dot random offset
+        dots.forEach((dot) => {
+          const rp = dot.settlePhase;
           const phase = dot.col * 0.8 + dot.row * 1.1 + rp;
           const amp = 0.7 + Math.sin(rp * 3.7) * 0.5;
           const angle = (Math.sin(time * (1.3 + rp * 0.4) + phase) * 0.15
                       + Math.sin(time * (2.1 + rp * 0.3) + phase * 0.6) * 0.08
                       + Math.sin(time * (0.6 + rp * 0.2) + phase * 1.4) * 0.05) * amp * eased;
           _calmQuat.setFromAxisAngle(_calmAxis, angle);
-          dot.group.quaternion.copy(base).multiply(_calmQuat);
+          // 加算方式: dot.update() が設定した natural な quaternion の上に重畳
+          dot.group.quaternion.multiply(_calmQuat);
           dot._correctUV();
         });
       }
@@ -1038,28 +1026,18 @@
       let calm2StartTime = 0;
       let calm2StopTime = 0;
       const CALM2_EASE_IN = 2.0;
-      const CALM2_EASE_OUT = 0.6;
+      const CALM2_EASE_OUT = 0.8;
       const _calm2Axis = new THREE.Vector3(0, 1, 0);
       const _calm2Quat = new THREE.Quaternion();
+      const _calm2IdentityQuat = new THREE.Quaternion();
 
+      // Calm2: natural な回転（フリップ/セトリング）に加算方式で重畳
       function startCalm2() {
         if (calm2Active && !calm2Stopping) return;
         if (calm2Stopping) { calm2Stopping = false; }
         if (!calm2Active) {
           calm2Active = true;
           calm2StartTime = clock.getElapsedTime();
-          dots.forEach(dot => {
-            // セトリング中は強制完了してクリーンな状態に
-            if (dot.settling) {
-              dot.settling = false;
-              dot.group.quaternion.copy(dot.targetQuat);
-              dot._correctUV();
-            }
-            // フリップ中のドットは targetQuat を基準にする（完了後の正しい位置）
-            dot._calm2Base = dot.flipping
-              ? dot.targetQuat.clone()
-              : dot.group.quaternion.clone();
-          });
         }
         document.getElementById('btn-calm2').classList.add('active');
       }
@@ -1067,46 +1045,66 @@
         if (!calm2Active || calm2Stopping) return;
         calm2Stopping = true;
         calm2StopTime = clock.getElapsedTime();
-        document.getElementById('btn-calm2').classList.remove('active');
-      }
-      function finishCalm2Stop() {
-        calm2Active = false;
-        calm2Stopping = false;
+        // 停止時の natural 位置を記録（identity へ緩やかに slerp）
         dots.forEach(dot => {
-          const base = dot._calm2Base;
-          if (base) {
-            if (!dot.flipping) {
-              dot.group.quaternion.copy(base);
-              dot._correctUV();
-            }
-            dot._calm2Base = null;
-          }
+          dot._calm2NaturalFrom = dot.naturalQuat.clone();
+          dot.flipping = false;
+          dot.settling = false;
         });
+        clearPendingTimers();
+        animating = false;
+        document.getElementById('btn-calm2').classList.remove('active');
       }
       function updateCalm2(time) {
         if (!calm2Active) return;
-        const elapsedIn = time - calm2StartTime;
-        const easeIn = Math.min(elapsedIn / CALM2_EASE_IN, 1);
-        let eased = easeIn * easeIn * (3 - 2 * easeIn);
+        let eased;
         if (calm2Stopping) {
+          // Calm2 OFF: 振幅フェード + natural を identity へ同じカーブでスラープ
           const elapsedOut = time - calm2StopTime;
-          const easeOut = Math.min(elapsedOut / CALM2_EASE_OUT, 1);
-          const fadeOut = 1 - easeOut * easeOut * (3 - 2 * easeOut);
-          eased *= fadeOut;
-          if (easeOut >= 1) { finishCalm2Stop(); return; }
+          const t = Math.min(elapsedOut / CALM2_EASE_OUT, 1);
+          const smooth = t * t * (3 - 2 * t); // smoothstep
+          if (t >= 1) {
+            calm2Active = false;
+            calm2Stopping = false;
+            dots.forEach(dot => {
+              dot.naturalQuat.identity();
+              dot.targetQuat.identity();
+              dot.group.quaternion.identity();
+              dot.showingFront = true;
+              dot.frontTex.matrix.identity();
+              dot.backTex.matrix.identity();
+              dot._calm2NaturalFrom = null;
+            });
+            return;
+          }
+          // naturalQuat を各ドットごとに identity へ向かってスラープ
+          dots.forEach(dot => {
+            const from = dot._calm2NaturalFrom;
+            if (!from) return;
+            dot.naturalQuat.slerpQuaternions(from, _calm2IdentityQuat, smooth);
+            dot.group.quaternion.copy(dot.naturalQuat);
+          });
+          eased = 1 - smooth; // 振幅も同じカーブでフェード
+        } else {
+          const elapsedIn = time - calm2StartTime;
+          const easeIn = Math.min(elapsedIn / CALM2_EASE_IN, 1);
+          eased = easeIn * easeIn * (3 - 2 * easeIn);
         }
+        const MAX_CALM2_ANGLE = Math.PI / 3; // 60度
         dots.forEach((dot) => {
-          if (dot.flipping) return;
-          const base = dot._calm2Base;
-          if (!base) return;
           const rp = dot.settlePhase;
           const phase = dot.col * 0.8 + dot.row * 1.1 + rp;
           const amp = 0.7 + Math.sin(rp * 3.7) * 0.5;
-          const angle = (Math.sin(time * (1.3 + rp * 0.4) + phase) * 0.15
-                      + Math.sin(time * (2.1 + rp * 0.3) + phase * 0.6) * 0.08
-                      + Math.sin(time * (0.6 + rp * 0.2) + phase * 1.4) * 0.05) * amp * eased;
+          // 振幅合計(0.87) × amp最大(1.2) ≈ 1.04 rad (60°) に収まるよう調整
+          let angle = (Math.sin(time * (1.3 + rp * 0.4) + phase) * 0.47
+                    + Math.sin(time * (2.1 + rp * 0.3) + phase * 0.6) * 0.25
+                    + Math.sin(time * (0.6 + rp * 0.2) + phase * 1.4) * 0.15) * amp * eased;
+          // 安全クランプ: 60度を超えないように
+          if (angle > MAX_CALM2_ANGLE) angle = MAX_CALM2_ANGLE;
+          else if (angle < -MAX_CALM2_ANGLE) angle = -MAX_CALM2_ANGLE;
           _calm2Quat.setFromAxisAngle(_calm2Axis, angle);
-          dot.group.quaternion.copy(base).multiply(_calm2Quat);
+          // 加算方式: dot.update() が設定した natural な quaternion の上に揺れを重畳
+          dot.group.quaternion.multiply(_calm2Quat);
           dot._correctUV();
         });
       }
@@ -1162,7 +1160,11 @@
         animating = false;
 
         stopCalm();
-        stopCalm2();
+        // Calm2は強制的に非アクティブ化（slerpが走って戻るのを防ぐ）
+        calm2Active = false;
+        calm2Stopping = false;
+        dots.forEach(dot => { dot._calm2StopFrom = null; });
+        document.getElementById('btn-calm2').classList.remove('active');
         mouseTrailMode = 'off';
         btnMouseTrail.textContent = 'Mouse Trail';
         clickRippleMode = false;
