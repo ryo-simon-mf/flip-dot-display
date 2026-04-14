@@ -435,6 +435,34 @@
       return geo;
     }
 
+    // Plush用: BoxGeometryを高解像度にサブディバイドしてdisplacementで頂点変位できるように
+    function buildPlushBoxGeo(size, squash, gap) {
+      const s = size * 2 * (gap ? 0.92 : 1.0);
+      const d = size * 2 * squash;
+      const seg = 32;
+      const geo = new THREE.BoxGeometry(s, s, d, seg, seg, 1);
+      const pos = geo.attributes.position;
+      const uvs = geo.attributes.uv;
+      const R = s / 2;
+      // Bevel/Plush形式: 側面(seg*1*2verts*4)、次に前面、次に背面
+      const sideVertsPerFace = (seg + 1) * 2;
+      const faceVerts = (seg + 1) * (seg + 1);
+      const backStart = 4 * sideVertsPerFace + faceVerts;
+      // 背面UV規則 u=(x/R+1)/2, v=(-y/R+1)/2
+      for (let i = backStart; i < backStart + faceVerts; i++) {
+        uvs.setXY(i, (pos.getX(i) / R + 1) / 2, (-pos.getY(i) / R + 1) / 2);
+      }
+      uvs.needsUpdate = true;
+      const sideIdxPerFace = seg * 1 * 2 * 3;
+      const faceIdx = seg * seg * 2 * 3;
+      const sideTotal = 4 * sideIdxPerFace;
+      geo.clearGroups();
+      geo.addGroup(0, sideTotal, 2);
+      geo.addGroup(sideTotal, faceIdx, 0);
+      geo.addGroup(sideTotal + faceIdx, faceIdx, 1);
+      return geo;
+    }
+
     function buildBoxGeo(size, squash, gap) {
       const s = size * 2 * (gap ? 0.92 : 1.0);
       const d = size * 2 * squash;
@@ -459,10 +487,10 @@
       return geo;
     }
 
-    function buildBevelGeo(size, squash, gap) {
+    function buildBevelGeo(size, squash, gap, segOverride) {
       const s = size * 2 * (gap ? 0.96 : 1.0);
       const d = size * 2 * squash;
-      const seg = 16;
+      const seg = segOverride || 16;
       const geo = new THREE.BoxGeometry(s, s, d, seg, seg, 1);
       const pos = geo.attributes.position;
       const uvs = geo.attributes.uv;
@@ -513,22 +541,53 @@
     let stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
     let sideMat = null; // shared side material for box shape
 
-    // 手続き的に毛羽立ちノーマルマップを生成（Plushモード用、共有テクスチャ）
+    // 手続き的に毛羽立ちノーマル+ラフネス+displacementマップを生成（Plushモード用、共有テクスチャ）
     let plushNormalMap = null;
-    function buildPlushNormalMap() {
-      if (plushNormalMap) return plushNormalMap;
-      const size = 256;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const imgData = ctx.createImageData(size, size);
-      const d = imgData.data;
-      // 粒状ノイズから擬似ノーマル生成
+    let plushRoughnessMap = null;
+    let plushDisplacementMap = null;
+    function buildPlushMaps() {
+      if (plushNormalMap && plushRoughnessMap && plushDisplacementMap) return;
+      const size = 512;
+      // --- Height field: 多オクターブノイズ + 方向性ストリーク ---
       const height = new Float32Array(size * size);
-      for (let i = 0; i < size * size; i++) {
-        // ランダムノイズ + 低周波の揺らぎで "毛羽感"
-        height[i] = Math.random() * 0.6 + (Math.sin(i * 0.13) + Math.cos(i * 0.27)) * 0.2;
+      // 細かい毛先（高周波ランダム）
+      const fine = new Float32Array(size * size);
+      for (let i = 0; i < size * size; i++) fine[i] = Math.random();
+      // 中周波ノイズ (低解像度をアップサンプル)
+      const midRes = 64;
+      const midNoise = new Float32Array(midRes * midRes);
+      for (let i = 0; i < midRes * midRes; i++) midNoise[i] = Math.random();
+      // 方向性ストリーク（毛流れのような筋）
+      const streakSeed = Math.random() * 1000;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = y * size + x;
+          // mid bilinear sample
+          const mx = (x / size) * midRes;
+          const my = (y / size) * midRes;
+          const mx0 = Math.floor(mx), my0 = Math.floor(my);
+          const mx1 = (mx0 + 1) % midRes, my1 = (my0 + 1) % midRes;
+          const fx = mx - mx0, fy = my - my0;
+          const m00 = midNoise[my0 * midRes + mx0];
+          const m10 = midNoise[my0 * midRes + mx1];
+          const m01 = midNoise[my1 * midRes + mx0];
+          const m11 = midNoise[my1 * midRes + mx1];
+          const mid = m00 * (1 - fx) * (1 - fy) + m10 * fx * (1 - fy)
+                    + m01 * (1 - fx) * fy + m11 * fx * fy;
+          // 縦方向ストリーク（毛の向き）
+          const streak = Math.sin((x + Math.sin(y * 0.15 + streakSeed) * 6) * 0.9) * 0.3
+                       + Math.sin(y * 0.4 + streakSeed) * 0.15;
+          // 総合ハイトフィールド
+          height[i] = fine[i] * 1.5 + mid * 0.8 + streak * 0.6;
+        }
       }
+      // --- Normal map ---
+      const nCanvas = document.createElement('canvas');
+      nCanvas.width = size; nCanvas.height = size;
+      const nCtx = nCanvas.getContext('2d');
+      const nImg = nCtx.createImageData(size, size);
+      const nd = nImg.data;
+      const strength = 3.0; // 勾配強度（毛羽立ち感）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const i = y * size + x;
@@ -536,25 +595,70 @@
           const r = height[y * size + ((x + 1) % size)];
           const u = height[((y - 1 + size) % size) * size + x];
           const dn = height[((y + 1) % size) * size + x];
-          const dx = (r - l) * 0.5;
-          const dy = (dn - u) * 0.5;
-          // Tangent-space normal, encoded as RGB
+          const dx = (r - l) * strength;
+          const dy = (dn - u) * strength;
           let nx = -dx, ny = -dy, nz = 1.0;
           const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
           nx /= len; ny /= len; nz /= len;
           const p = i * 4;
-          d[p] = Math.floor((nx * 0.5 + 0.5) * 255);
-          d[p + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
-          d[p + 2] = Math.floor((nz * 0.5 + 0.5) * 255);
-          d[p + 3] = 255;
+          nd[p] = Math.floor((nx * 0.5 + 0.5) * 255);
+          nd[p + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
+          nd[p + 2] = Math.floor((nz * 0.5 + 0.5) * 255);
+          nd[p + 3] = 255;
         }
       }
-      ctx.putImageData(imgData, 0, 0);
-      plushNormalMap = new THREE.CanvasTexture(canvas);
+      nCtx.putImageData(nImg, 0, 0);
+      plushNormalMap = new THREE.CanvasTexture(nCanvas);
       plushNormalMap.wrapS = plushNormalMap.wrapT = THREE.RepeatWrapping;
-      plushNormalMap.repeat.set(3, 3);
-      return plushNormalMap;
+      plushNormalMap.repeat.set(6, 6);
+      plushNormalMap.anisotropy = 4;
+
+      // --- Roughness map: 谷が暗く(rough)、頂が明るく(smooth) ---
+      const rCanvas = document.createElement('canvas');
+      rCanvas.width = size; rCanvas.height = size;
+      const rCtx = rCanvas.getContext('2d');
+      const rImg = rCtx.createImageData(size, size);
+      const rd = rImg.data;
+      // heightを0-1正規化
+      let hMin = Infinity, hMax = -Infinity;
+      for (let i = 0; i < size * size; i++) {
+        if (height[i] < hMin) hMin = height[i];
+        if (height[i] > hMax) hMax = height[i];
+      }
+      const hRange = hMax - hMin;
+      for (let i = 0; i < size * size; i++) {
+        const h = (height[i] - hMin) / hRange; // 0..1
+        // 毛先は滑らか(低roughness)、谷は粗い(高roughness)
+        const rough = 0.7 + (1 - h) * 0.3; // 0.7..1.0
+        const v = Math.floor(rough * 255);
+        const p = i * 4;
+        rd[p] = v; rd[p + 1] = v; rd[p + 2] = v; rd[p + 3] = 255;
+      }
+      rCtx.putImageData(rImg, 0, 0);
+      plushRoughnessMap = new THREE.CanvasTexture(rCanvas);
+      plushRoughnessMap.wrapS = plushRoughnessMap.wrapT = THREE.RepeatWrapping;
+      plushRoughnessMap.repeat.set(6, 6);
+
+      // --- Displacement map (heightをそのままグレースケール) ---
+      const dCanvas = document.createElement('canvas');
+      dCanvas.width = size; dCanvas.height = size;
+      const dCtx = dCanvas.getContext('2d');
+      const dImg = dCtx.createImageData(size, size);
+      const dd = dImg.data;
+      for (let i = 0; i < size * size; i++) {
+        const h = (height[i] - hMin) / hRange; // 0..1
+        const v = Math.floor(h * 255);
+        const p = i * 4;
+        dd[p] = v; dd[p + 1] = v; dd[p + 2] = v; dd[p + 3] = 255;
+      }
+      dCtx.putImageData(dImg, 0, 0);
+      plushDisplacementMap = new THREE.CanvasTexture(dCanvas);
+      plushDisplacementMap.wrapS = plushDisplacementMap.wrapT = THREE.RepeatWrapping;
+      plushDisplacementMap.repeat.set(6, 6);
     }
+    function getPlushNormalMap() { buildPlushMaps(); return plushNormalMap; }
+    function getPlushRoughnessMap() { buildPlushMaps(); return plushRoughnessMap; }
+    function getPlushDisplacementMap() { buildPlushMaps(); return plushDisplacementMap; }
 
     // --- Dot class ---
 
@@ -814,7 +918,14 @@
 
         if (stoneGeo) stoneGeo.dispose();
         const hasSides = params.dotShape !== 'round';
-        if (params.dotShape === 'square')
+        const isPlushMode = params.surface === 'plush';
+        if (isPlushMode && params.dotShape === 'square') {
+          // Plush: 高解像度BoxGeometryでdisplacement対応
+          stoneGeo = buildPlushBoxGeo(params.spacing / 2, params.squash, params.dotGap);
+        } else if (isPlushMode && params.dotShape === 'bevel') {
+          // Plush+Bevel: 高解像度BevelGeometry (seg 32) でdisplacement対応
+          stoneGeo = buildBevelGeo(params.spacing / 2, params.squash, params.dotGap, 32);
+        } else if (params.dotShape === 'square')
           stoneGeo = buildBoxGeo(params.spacing / 2, params.squash, params.dotGap);
         else if (params.dotShape === 'bevel')
           stoneGeo = buildBevelGeo(params.spacing / 2, params.squash, params.dotGap);
@@ -835,13 +946,17 @@
             const frontMat = isPlush
               ? new THREE.MeshPhysicalMaterial({
                   map: frontTex,
-                  roughness: 0.9,
+                  roughness: 0.95,
                   metalness: 0.0,
                   sheen: 1.0,
-                  sheenColor: new THREE.Color(0xffffff),
-                  sheenRoughness: 0.8,
-                  normalMap: buildPlushNormalMap(),
-                  normalScale: new THREE.Vector2(0.4, 0.4),
+                  sheenColor: new THREE.Color(0xf5f0e8),
+                  sheenRoughness: 0.35,
+                  normalMap: getPlushNormalMap(),
+                  normalScale: new THREE.Vector2(1.5, 1.5),
+                  roughnessMap: getPlushRoughnessMap(),
+                  displacementMap: getPlushDisplacementMap(),
+                  displacementScale: params.spacing * 0.08,
+                  displacementBias: -params.spacing * 0.03,
                 })
               : new THREE.MeshStandardMaterial({
                   map: frontTex, roughness: params.roughness, metalness: params.metalness
@@ -849,13 +964,17 @@
             const backMat = isPlush
               ? new THREE.MeshPhysicalMaterial({
                   map: backTex,
-                  roughness: 0.9,
+                  roughness: 0.95,
                   metalness: 0.0,
                   sheen: 1.0,
-                  sheenColor: new THREE.Color(0xffffff),
-                  sheenRoughness: 0.8,
-                  normalMap: buildPlushNormalMap(),
-                  normalScale: new THREE.Vector2(0.4, 0.4),
+                  sheenColor: new THREE.Color(0xf5f0e8),
+                  sheenRoughness: 0.35,
+                  normalMap: getPlushNormalMap(),
+                  normalScale: new THREE.Vector2(1.5, 1.5),
+                  roughnessMap: getPlushRoughnessMap(),
+                  displacementMap: getPlushDisplacementMap(),
+                  displacementScale: params.spacing * 0.08,
+                  displacementBias: -params.spacing * 0.03,
                 })
               : new THREE.MeshStandardMaterial({
                   map: backTex, roughness: params.roughness, metalness: params.metalness
@@ -874,6 +993,7 @@
 
             const group = new THREE.Group();
             group.add(stoneMesh);
+
             group.position.set(
               col * params.spacing - offsetX,
               (params.rows - 1 - row) * params.spacing - offsetY,
