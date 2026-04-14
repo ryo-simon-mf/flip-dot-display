@@ -126,6 +126,7 @@
     <button id="btn-calm2" class="btn-anim">Sway</button>
     <button id="btn-gust" class="btn-anim">Gust</button>
     <button id="btn-combo" class="btn-anim">Combo</button>
+    <button id="btn-combo2" class="btn-anim">Combo2</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
@@ -1222,11 +1223,11 @@
       const _calmQuat = new THREE.Quaternion();
 
       // Breeze (そよ風): one-shot horizontal wave with row offset + flutter
-      function triggerBreeze() {
+      function triggerBreeze(forcedDir) {
         if (animating) return;
         animating = true;
 
-        const windDir = Math.random() < 0.5 ? 1 : -1;
+        const windDir = forcedDir !== undefined ? forcedDir : (Math.random() < 0.5 ? 1 : -1);
         const flipAxis = new THREE.Vector3(0, windDir, 0);
         const colDelay = params.lineDelay * 1000 * 2.5;
 
@@ -1289,6 +1290,8 @@
           if (easeOut >= 1) { calmActive = false; calmStopping = false; return; }
         }
         dots.forEach((dot) => {
+          // フリップ中のドットは振動をスキップ (フリップへの干渉を回避)
+          if (dot.flipping) return;
           const rp = dot.settlePhase;
           const phase = dot.col * 0.8 + dot.row * 1.1 + rp;
           const amp = 0.7 + Math.sin(rp * 3.7) * 0.5;
@@ -1664,6 +1667,29 @@
         }, 4000));
       }
       document.getElementById('btn-combo').onclick = () => triggerCombo();
+
+      // Combo2: Sway → Calm → Breeze(左から右)、Calm維持したままBreezeが始まりその後Calmフェードアウト
+      function triggerCombo2() {
+        if (animating) return;
+        if (!calm2Active) startCalm2();
+        // 2.0s: Calm を先行スタート (Swayの停止より1秒前 → オーバーラップでease-in/outが交差)
+        pendingTimers.push(setTimeout(() => {
+          if (!calmActive) startCalm();
+        }, 2000));
+        // 3.0s: Sway停止
+        pendingTimers.push(setTimeout(() => {
+          if (calm2Active) stopCalm2();
+        }, 3000));
+        // 5.0s: Breeze 始動 (Calm はまだ ON のまま)
+        pendingTimers.push(setTimeout(() => {
+          triggerBreeze(1);
+        }, 5000));
+        // 5.4s: Breezeが始まってから Calm をフェードアウト
+        pendingTimers.push(setTimeout(() => {
+          if (calmActive) stopCalm();
+        }, 5400));
+      }
+      document.getElementById('btn-combo2').onclick = () => triggerCombo2();
       btnClickRipple.onclick = () => {
         clickRippleMode = !clickRippleMode;
         btnClickRipple.classList.toggle('active', clickRippleMode);
