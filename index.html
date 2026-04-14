@@ -1650,21 +1650,18 @@
 
       // Combo: Calm → Sway → Breeze を繋がった揺れとして実行
       function triggerCombo() {
-        // 重複実行防止: 既にcomboか他アニメ中ならスキップ
         if (animating) return;
-        // Calm開始 (subtle)
         if (!calmActive) startCalm();
-        // 1s後: Calmを停止、Swayを開始 (オーバーラップで滑らかに切替)
+        // 1s後: Calmを停止、Swayを開始
         pendingTimers.push(setTimeout(() => {
           if (calmActive) stopCalm();
           if (!calm2Active) startCalm2();
         }, 1000));
-        // 2s後: Swayを停止、Breezeをトリガー
+        // 4s後 (Sway 3秒): Swayを停止、Breezeをトリガー
         pendingTimers.push(setTimeout(() => {
           if (calm2Active) stopCalm2();
-          // Sway停止の ease-out と同時にBreezeが始動 (naturalQuatに対して加算なので自然)
           triggerBreeze();
-        }, 2000));
+        }, 4000));
       }
       document.getElementById('btn-combo').onclick = () => triggerCombo();
       btnClickRipple.onclick = () => {
