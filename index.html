@@ -132,6 +132,7 @@
     <button id="btn-gap" class="btn-sys">Gap: Off</button>
     <button id="btn-side" class="btn-sys">Side: White</button>
     <button id="btn-glossy" class="btn-sys">Glossy</button>
+    <button id="btn-surface" class="btn-sys">Surface: Smooth</button>
     <button id="btn-bg" class="btn-sys">BG: Black</button>
     <button id="btn-truecolor" class="btn-sys">PBR Light</button>
     <button id="btn-dynlight" class="btn-sys">Dyn Light</button>
@@ -255,6 +256,7 @@
       sideMatchBg: false,  // false=white, true=match background
       shadeMix: 0,  // 0=pure True Color (unlit), 1=full PBR (lit)
       trueColor: true,
+      surface: 'smooth', // 'smooth' | 'plush'
     };
     const CROP_SIZE = 256;
 
@@ -511,6 +513,49 @@
     let stoneGeo = buildStoneGeo(params.spacing / 2, params.squash);
     let sideMat = null; // shared side material for box shape
 
+    // 手続き的に毛羽立ちノーマルマップを生成（Plushモード用、共有テクスチャ）
+    let plushNormalMap = null;
+    function buildPlushNormalMap() {
+      if (plushNormalMap) return plushNormalMap;
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(size, size);
+      const d = imgData.data;
+      // 粒状ノイズから擬似ノーマル生成
+      const height = new Float32Array(size * size);
+      for (let i = 0; i < size * size; i++) {
+        // ランダムノイズ + 低周波の揺らぎで "毛羽感"
+        height[i] = Math.random() * 0.6 + (Math.sin(i * 0.13) + Math.cos(i * 0.27)) * 0.2;
+      }
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = y * size + x;
+          const l = height[y * size + ((x - 1 + size) % size)];
+          const r = height[y * size + ((x + 1) % size)];
+          const u = height[((y - 1 + size) % size) * size + x];
+          const dn = height[((y + 1) % size) * size + x];
+          const dx = (r - l) * 0.5;
+          const dy = (dn - u) * 0.5;
+          // Tangent-space normal, encoded as RGB
+          let nx = -dx, ny = -dy, nz = 1.0;
+          const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+          nx /= len; ny /= len; nz /= len;
+          const p = i * 4;
+          d[p] = Math.floor((nx * 0.5 + 0.5) * 255);
+          d[p + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
+          d[p + 2] = Math.floor((nz * 0.5 + 0.5) * 255);
+          d[p + 3] = 255;
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+      plushNormalMap = new THREE.CanvasTexture(canvas);
+      plushNormalMap.wrapS = plushNormalMap.wrapT = THREE.RepeatWrapping;
+      plushNormalMap.repeat.set(3, 3);
+      return plushNormalMap;
+    }
+
     // --- Dot class ---
 
     const _flipQuat = new THREE.Quaternion();
@@ -574,10 +619,16 @@
       }
 
       applyMaterial() {
+        const isPlush = params.surface === 'plush';
         for (const mat of [this.frontMat, this.backMat]) {
           if (mat) {
-            mat.roughness = params.roughness;
-            mat.metalness = params.metalness;
+            if (isPlush) {
+              mat.roughness = 0.9;
+              mat.metalness = 0.0;
+            } else {
+              mat.roughness = params.roughness;
+              mat.metalness = params.metalness;
+            }
             if (params.trueColor) {
               const mix = params.shadeMix;
               mat.emissiveMap = mat.map;
@@ -780,12 +831,35 @@
             const frontTex = createCropTexture(img1, col, row);
             const backTex = createCropTexture(img2, col, row);
 
-            const frontMat = new THREE.MeshStandardMaterial({
-              map: frontTex, roughness: params.roughness, metalness: params.metalness
-            });
-            const backMat = new THREE.MeshStandardMaterial({
-              map: backTex, roughness: params.roughness, metalness: params.metalness
-            });
+            const isPlush = params.surface === 'plush';
+            const frontMat = isPlush
+              ? new THREE.MeshPhysicalMaterial({
+                  map: frontTex,
+                  roughness: 0.9,
+                  metalness: 0.0,
+                  sheen: 1.0,
+                  sheenColor: new THREE.Color(0xffffff),
+                  sheenRoughness: 0.8,
+                  normalMap: buildPlushNormalMap(),
+                  normalScale: new THREE.Vector2(0.4, 0.4),
+                })
+              : new THREE.MeshStandardMaterial({
+                  map: frontTex, roughness: params.roughness, metalness: params.metalness
+                });
+            const backMat = isPlush
+              ? new THREE.MeshPhysicalMaterial({
+                  map: backTex,
+                  roughness: 0.9,
+                  metalness: 0.0,
+                  sheen: 1.0,
+                  sheenColor: new THREE.Color(0xffffff),
+                  sheenRoughness: 0.8,
+                  normalMap: buildPlushNormalMap(),
+                  normalScale: new THREE.Vector2(0.4, 0.4),
+                })
+              : new THREE.MeshStandardMaterial({
+                  map: backTex, roughness: params.roughness, metalness: params.metalness
+                });
 
             let dotSideMat = null;
             if (hasSides) {
@@ -1432,6 +1506,18 @@
         dots.forEach(dot => dot.applyMaterial()); pushHistory();
       };
 
+      const btnSurface = document.getElementById('btn-surface');
+      btnSurface.onclick = () => {
+        params.surface = params.surface === 'smooth' ? 'plush' : 'smooth';
+        btnSurface.textContent = 'Surface: ' + (params.surface === 'plush' ? 'Plush' : 'Smooth');
+        // シャドウを柔らかく/硬く切替
+        if (shadowLight && shadowLight.shadow) {
+          shadowLight.shadow.radius = params.surface === 'plush' ? 8 : 4;
+        }
+        buildDots();
+        pushHistory();
+      };
+
       const btnGlossy = document.getElementById('btn-glossy');
       btnGlossy.onclick = () => {
         const isGlossy = params.roughness < 0.15;
@@ -1742,6 +1828,7 @@
         btnTrueColor.textContent = params.trueColor ? 'PBR Light' : 'True Color';
         btnGlossy.textContent = params.roughness < 0.15 ? 'Matte' : 'Glossy';
         btnSide.textContent = 'Side: ' + (params.sideMatchBg ? 'BG' : 'White');
+        btnSurface.textContent = 'Surface: ' + (params.surface === 'plush' ? 'Plush' : 'Smooth');
         gui.controllersRecursive().forEach(c => c.updateDisplay());
       }
 
