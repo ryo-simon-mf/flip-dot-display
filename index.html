@@ -64,7 +64,7 @@
     .btn-anim:hover { background: rgba(255,255,255,0.2); }
     .btn-sys { background: rgba(255,255,255,0.08); }
     .btn-sys:hover { background: rgba(255,255,255,0.2); }
-    .btn-anim.active { background: rgba(0,120,255,0.2); border-color: rgba(0,120,255,0.5); color: #0066cc; }
+    .btn-anim.active { background: rgba(0,180,255,0.35); border: 2px solid #00c8ff; color: #fff; box-shadow: 0 0 10px rgba(0,200,255,0.6); font-weight: 600; }
 
     #help-btn {
       position: fixed; bottom: 20px; left: 20px; z-index: 20;
@@ -119,6 +119,7 @@
     <button id="btn-seq-left" class="btn-anim">Left</button>
     <button id="btn-breeze" class="btn-anim">Breeze</button>
     <button id="btn-calm" class="btn-anim">Calm</button>
+    <button id="btn-sway" class="btn-anim">Sway</button>
     <button id="btn-gust" class="btn-anim">Gust</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
@@ -607,8 +608,8 @@
         this.flipping = true;
         this.flipStartTime = time;
         this.flutter = flutter;
-        // Use calm base (without oscillation) if calm is active, otherwise current quaternion
-        this.startQuat.copy(this._calmBase || this.group.quaternion);
+        // Use calm/sway base (without oscillation) if active, otherwise current quaternion
+        this.startQuat.copy(this._calmBase || this._swayBase || this.group.quaternion);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
         if (params.dotShape === 'square' || params.dotShape === 'bevel') {
@@ -669,6 +670,7 @@
           this.updateSideColor();
           this.flutter = false;
           if (this._calmBase) this._calmBase.copy(this.targetQuat);
+          if (this._swayBase) this._swayBase.copy(this.targetQuat);
           // Start per-dot settling sway
           this.settling = true;
           this.settleStartTime = time;
@@ -841,6 +843,7 @@
 
       function triggerRipple() {
         if (animating) return;
+        snapOutSway();
         animating = true;
         const centerCol = (params.cols - 1) / 2;
         const centerRow = (params.rows - 1) / 2;
@@ -866,6 +869,7 @@
 
       function triggerSequence(direction) {
         if (animating) return;
+        snapOutSway();
         animating = true;
         const axis = { down: AXIS_DOWN, up: AXIS_UP, right: AXIS_RIGHT, left: AXIS_LEFT }[direction];
         const groups = new Map();
@@ -931,6 +935,7 @@
       // Breeze (そよ風): one-shot horizontal wave with row offset + flutter
       function triggerBreeze() {
         if (animating) return;
+        snapOutSway();
         animating = true;
 
         const windDir = Math.random() < 0.5 ? 1 : -1;
@@ -976,7 +981,7 @@
       }
       let calmStopping = false;
       let calmStopTime = 0;
-      const CALM_EASE_OUT = 2.0;
+      const CALM_EASE_OUT = 0.6;
 
       function stopCalm() {
         if (!calmActive || calmStopping) return;
@@ -989,10 +994,13 @@
         calmActive = false;
         calmStopping = false;
         dots.forEach(dot => {
-          if (dot._calmBase) {
-            dot.group.quaternion.copy(dot._calmBase);
+          const base = dot._calmBase;
+          if (base) {
+            if (!dot.flipping) {
+              dot.group.quaternion.copy(base);
+              dot._correctUV();
+            }
             dot._calmBase = null;
-            dot._correctUV();
           }
         });
       }
@@ -1027,9 +1035,107 @@
         });
       }
 
+      // Sway (中間): Calmの強化版、振幅大きめ・揺れ速め、独立トグル
+      let swayActive = false;
+      let swayStopping = false;
+      let swayStartTime = 0;
+      let swayStopTime = 0;
+      const SWAY_EASE_IN = 1.2;
+      const SWAY_EASE_OUT = 0.6;
+      const _swayAxis = new THREE.Vector3(0, 1, 0);
+      const _swayQuat = new THREE.Quaternion();
+
+      function startSway() {
+        if (swayActive && !swayStopping) return;
+        if (swayStopping) { swayStopping = false; }
+        if (!swayActive) {
+          swayActive = true;
+          swayStartTime = clock.getElapsedTime();
+          dots.forEach(dot => {
+            // セトリング中は強制完了してクリーンな状態に
+            if (dot.settling) {
+              dot.settling = false;
+              dot.group.quaternion.copy(dot.targetQuat);
+              dot._correctUV();
+            }
+            // フリップ中のドットは targetQuat を基準にする（完了後の正しい位置）
+            dot._swayBase = dot.flipping
+              ? dot.targetQuat.clone()
+              : dot.group.quaternion.clone();
+          });
+        }
+        document.getElementById('btn-sway').classList.add('active');
+      }
+      function stopSway() {
+        if (!swayActive || swayStopping) return;
+        swayStopping = true;
+        swayStopTime = clock.getElapsedTime();
+        document.getElementById('btn-sway').classList.remove('active');
+      }
+      // 即座にSwayを終了し、全ドットを_swayBaseへスナップ（他アニメ開始時に使用）
+      function snapOutSway() {
+        if (!swayActive) return;
+        swayStopping = false;
+        dots.forEach(dot => {
+          const base = dot._swayBase;
+          if (base) {
+            if (!dot.flipping) {
+              dot.group.quaternion.copy(base);
+              dot._correctUV();
+            }
+            dot._swayBase = null;
+          }
+        });
+        swayActive = false;
+        document.getElementById('btn-sway').classList.remove('active');
+      }
+      function finishSwayStop() {
+        swayActive = false;
+        swayStopping = false;
+        dots.forEach(dot => {
+          const base = dot._swayBase;
+          if (base) {
+            if (!dot.flipping) {
+              dot.group.quaternion.copy(base);
+              dot._correctUV();
+            }
+            dot._swayBase = null;
+          }
+        });
+      }
+      function updateSway(time) {
+        if (!swayActive) return;
+        const elapsedIn = time - swayStartTime;
+        const easeIn = Math.min(elapsedIn / SWAY_EASE_IN, 1);
+        let eased = easeIn * easeIn * (3 - 2 * easeIn);
+        if (swayStopping) {
+          const elapsedOut = time - swayStopTime;
+          const easeOut = Math.min(elapsedOut / SWAY_EASE_OUT, 1);
+          const fadeOut = 1 - easeOut * easeOut * (3 - 2 * easeOut);
+          eased *= fadeOut;
+          if (easeOut >= 1) { finishSwayStop(); return; }
+        }
+        dots.forEach((dot) => {
+          if (dot.flipping) return;
+          const base = dot._swayBase;
+          if (!base) return;
+          const rp = dot.settlePhase;
+          const phase = dot.col * 0.6 + dot.row * 0.9 + rp;
+          const amp = 1.0 + Math.sin(rp * 3.7) * 0.6;
+          // Calmより速く・振幅3倍程度
+          const angle = (Math.sin(time * (2.2 + rp * 0.5) + phase) * 0.45
+                      + Math.sin(time * (3.4 + rp * 0.4) + phase * 0.6) * 0.22
+                      + Math.sin(time * (1.1 + rp * 0.3) + phase * 1.4) * 0.12) * amp * eased;
+          _swayQuat.setFromAxisAngle(_swayAxis, angle);
+          dot.group.quaternion.copy(base).multiply(_swayQuat);
+          dot._correctUV();
+        });
+      }
+
       // Gust (突風): horizontal sweep, all dots flip at once
       function triggerGust() {
         if (animating) return;
+        snapOutSway();
         animating = true;
 
         const windDir = Math.random() < 0.5 ? 1 : -1;
@@ -1245,6 +1351,7 @@
         const worldPos = mouseToWorld(e.clientX, e.clientY);
         if (!worldPos) return;
         if (animating) return;
+        snapOutSway();
         animating = true;
         triggerClickRipple(worldPos);
       });
@@ -1290,6 +1397,9 @@
       document.getElementById('btn-breeze').onclick = () => triggerBreeze();
       document.getElementById('btn-calm').onclick = () => {
         calmActive ? stopCalm() : startCalm();
+      };
+      document.getElementById('btn-sway').onclick = () => {
+        swayActive ? stopSway() : startSway();
       };
       document.getElementById('btn-gust').onclick = () => triggerGust();
       btnClickRipple.onclick = () => {
@@ -1713,6 +1823,7 @@
         const elapsed = clock.getElapsedTime();
         dots.forEach(dot => dot.update(elapsed));
         updateCalm(elapsed);
+        updateSway(elapsed);
         updateDynLight(elapsed);
         controls.update();
         renderer.render(scene, camera);
