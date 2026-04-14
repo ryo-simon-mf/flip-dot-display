@@ -125,6 +125,7 @@
     <button id="btn-calm" class="btn-anim">Calm</button>
     <button id="btn-calm2" class="btn-anim">Sway</button>
     <button id="btn-gust" class="btn-anim">Gust</button>
+    <button id="btn-combo" class="btn-anim">Combo</button>
     <button id="btn-click-ripple" class="btn-anim">Click Ripple</button>
     <button id="btn-mouse-trail" class="btn-anim">Mouse Trail</button>
     <button id="btn-reset" class="btn-sys">Reset</button>
@@ -790,16 +791,14 @@
 
       startFlip(time, axis, flutter = false) {
         if (this.flipping) return;
-        // Stop settling and snap to clean state before starting new flip
         if (this.settling) {
           this.settling = false;
-          this.naturalQuat.copy(this.targetQuat);
         }
         this.flipping = true;
         this.flipStartTime = time;
         this.flutter = flutter;
-        // natural 状態（揺れを含まない）を起点にする
-        this.startQuat.copy(this.naturalQuat);
+        // 視覚的な現在位置(揺れ込み)を起点にしてスナップ回避
+        this.startQuat.copy(this.group.quaternion);
         // Square dots: snap to nearest cardinal axis to keep grid aligned
         let flipAxis = axis;
         if (params.dotShape === 'square' || params.dotShape === 'bevel') {
@@ -810,7 +809,8 @@
           }
         }
         _flipQuat.setFromAxisAngle(flipAxis, Math.PI);
-        this.targetQuat.copy(_flipQuat).multiply(this.startQuat);
+        // targetは naturalQuat(揺れ抜きの基準) に180°を乗せたクリーンな目標
+        this.targetQuat.copy(_flipQuat).multiply(this.naturalQuat);
       }
 
       update(time) {
@@ -1323,50 +1323,31 @@
         }
         document.getElementById('btn-calm2').classList.add('active');
       }
+      let calm2StopAmp = 1.0; // 停止時点の eased 値を記録
       function stopCalm2() {
         if (!calm2Active || calm2Stopping) return;
         calm2Stopping = true;
         calm2StopTime = clock.getElapsedTime();
-        // 停止時の natural 位置を記録（identity へ緩やかに slerp）
-        dots.forEach(dot => {
-          dot._calm2NaturalFrom = dot.naturalQuat.clone();
-          dot.flipping = false;
-          dot.settling = false;
-        });
-        clearPendingTimers();
-        animating = false;
+        // 停止時点のease-in値を保存して振幅連続性を保つ
+        const elapsedIn = calm2StopTime - calm2StartTime;
+        const easeIn = Math.min(elapsedIn / CALM2_EASE_IN, 1);
+        calm2StopAmp = easeIn * easeIn * (3 - 2 * easeIn);
         document.getElementById('btn-calm2').classList.remove('active');
       }
       function updateCalm2(time) {
         if (!calm2Active) return;
         let eased;
         if (calm2Stopping) {
-          // Calm2 OFF: 振幅フェード + natural を identity へ同じカーブでスラープ
+          // Calm2 OFF: 停止時点の振幅値から 0 へ smoothstep で連続的にフェード
           const elapsedOut = time - calm2StopTime;
           const t = Math.min(elapsedOut / CALM2_EASE_OUT, 1);
-          const smooth = t * t * (3 - 2 * t); // smoothstep
+          const fadeOut = 1 - t * t * (3 - 2 * t);
+          eased = calm2StopAmp * fadeOut;
           if (t >= 1) {
             calm2Active = false;
             calm2Stopping = false;
-            dots.forEach(dot => {
-              dot.naturalQuat.identity();
-              dot.targetQuat.identity();
-              dot.group.quaternion.identity();
-              dot.showingFront = true;
-              dot.frontTex.matrix.identity();
-              dot.backTex.matrix.identity();
-              dot._calm2NaturalFrom = null;
-            });
             return;
           }
-          // naturalQuat を各ドットごとに identity へ向かってスラープ
-          dots.forEach(dot => {
-            const from = dot._calm2NaturalFrom;
-            if (!from) return;
-            dot.naturalQuat.slerpQuaternions(from, _calm2IdentityQuat, smooth);
-            dot.group.quaternion.copy(dot.naturalQuat);
-          });
-          eased = 1 - smooth; // 振幅も同じカーブでフェード
         } else {
           const elapsedIn = time - calm2StartTime;
           const easeIn = Math.min(elapsedIn / CALM2_EASE_IN, 1);
@@ -1374,6 +1355,8 @@
         }
         const MAX_CALM2_ANGLE = Math.PI / 3; // 60度
         dots.forEach((dot) => {
+          // フリップ中のドットは振動を乗せない（フリップが揺れて不自然になるのを防ぐ）
+          if (dot.flipping) return;
           const rp = dot.settlePhase;
           const phase = dot.col * 0.8 + dot.row * 1.1 + rp;
           const amp = 0.7 + Math.sin(rp * 3.7) * 0.5;
@@ -1664,6 +1647,26 @@
         calm2Active ? stopCalm2() : startCalm2();
       };
       document.getElementById('btn-gust').onclick = () => triggerGust();
+
+      // Combo: Calm → Sway → Breeze を繋がった揺れとして実行
+      function triggerCombo() {
+        // 重複実行防止: 既にcomboか他アニメ中ならスキップ
+        if (animating) return;
+        // Calm開始 (subtle)
+        if (!calmActive) startCalm();
+        // 1s後: Calmを停止、Swayを開始 (オーバーラップで滑らかに切替)
+        pendingTimers.push(setTimeout(() => {
+          if (calmActive) stopCalm();
+          if (!calm2Active) startCalm2();
+        }, 1000));
+        // 2s後: Swayを停止、Breezeをトリガー
+        pendingTimers.push(setTimeout(() => {
+          if (calm2Active) stopCalm2();
+          // Sway停止の ease-out と同時にBreezeが始動 (naturalQuatに対して加算なので自然)
+          triggerBreeze();
+        }, 2000));
+      }
+      document.getElementById('btn-combo').onclick = () => triggerCombo();
       btnClickRipple.onclick = () => {
         clickRippleMode = !clickRippleMode;
         btnClickRipple.classList.toggle('active', clickRippleMode);
