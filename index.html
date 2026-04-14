@@ -545,8 +545,9 @@
     let plushNormalMap = null;
     let plushRoughnessMap = null;
     let plushDisplacementMap = null;
+    let plushAlphaMap = null;
     function buildPlushMaps() {
-      if (plushNormalMap && plushRoughnessMap && plushDisplacementMap) return;
+      if (plushNormalMap && plushRoughnessMap && plushDisplacementMap && plushAlphaMap) return;
       const size = 512;
       // --- Height field: 多オクターブノイズ + 方向性ストリーク ---
       const height = new Float32Array(size * size);
@@ -639,7 +640,7 @@
       plushRoughnessMap.wrapS = plushRoughnessMap.wrapT = THREE.RepeatWrapping;
       plushRoughnessMap.repeat.set(6, 6);
 
-      // --- Displacement map (heightをそのままグレースケール) ---
+      // --- Displacement map (プレート1枚に対し1タイル、エッジもそのまま) ---
       const dCanvas = document.createElement('canvas');
       dCanvas.width = size; dCanvas.height = size;
       const dCtx = dCanvas.getContext('2d');
@@ -647,18 +648,46 @@
       const dd = dImg.data;
       for (let i = 0; i < size * size; i++) {
         const h = (height[i] - hMin) / hRange; // 0..1
-        const v = Math.floor(h * 255);
+        const vByte = Math.floor(h * 255);
         const p = i * 4;
-        dd[p] = v; dd[p + 1] = v; dd[p + 2] = v; dd[p + 3] = 255;
+        dd[p] = vByte; dd[p + 1] = vByte; dd[p + 2] = vByte; dd[p + 3] = 255;
       }
       dCtx.putImageData(dImg, 0, 0);
       plushDisplacementMap = new THREE.CanvasTexture(dCanvas);
-      plushDisplacementMap.wrapS = plushDisplacementMap.wrapT = THREE.RepeatWrapping;
-      plushDisplacementMap.repeat.set(6, 6);
+      plushDisplacementMap.wrapS = plushDisplacementMap.wrapT = THREE.ClampToEdgeWrapping;
+      plushDisplacementMap.repeat.set(1, 1);
+
+      // --- Alpha map (高い部分だけ不透明、谷間は透明で下の smooth 面を見せる) ---
+      const aCanvas = document.createElement('canvas');
+      aCanvas.width = size; aCanvas.height = size;
+      const aCtx = aCanvas.getContext('2d');
+      const aImg = aCtx.createImageData(size, size);
+      const ad = aImg.data;
+      const alphaEdgeFade = size * 0.12;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = y * size + x;
+          const h = (height[i] - hMin) / hRange;
+          // コントラスト強調 (threshold曲線)
+          const contrast = Math.pow(Math.max(0, h - 0.3) / 0.7, 1.2);
+          const distEdge = Math.min(x, size - 1 - x, y, size - 1 - y);
+          const edgeV = Math.min(1, distEdge / alphaEdgeFade);
+          const edgeSmooth = edgeV * edgeV * (3 - 2 * edgeV);
+          const alpha = Math.max(0, Math.min(1, contrast * edgeSmooth));
+          const vByte = Math.floor(alpha * 255);
+          const p = i * 4;
+          ad[p] = vByte; ad[p + 1] = vByte; ad[p + 2] = vByte; ad[p + 3] = 255;
+        }
+      }
+      aCtx.putImageData(aImg, 0, 0);
+      plushAlphaMap = new THREE.CanvasTexture(aCanvas);
+      plushAlphaMap.wrapS = plushAlphaMap.wrapT = THREE.ClampToEdgeWrapping;
+      plushAlphaMap.repeat.set(1, 1);
     }
     function getPlushNormalMap() { buildPlushMaps(); return plushNormalMap; }
     function getPlushRoughnessMap() { buildPlushMaps(); return plushRoughnessMap; }
     function getPlushDisplacementMap() { buildPlushMaps(); return plushDisplacementMap; }
+    function getPlushAlphaMap() { buildPlushMaps(); return plushAlphaMap; }
 
     // --- Dot class ---
 
@@ -919,13 +948,8 @@
         if (stoneGeo) stoneGeo.dispose();
         const hasSides = params.dotShape !== 'round';
         const isPlushMode = params.surface === 'plush';
-        if (isPlushMode && params.dotShape === 'square') {
-          // Plush: 高解像度BoxGeometryでdisplacement対応
-          stoneGeo = buildPlushBoxGeo(params.spacing / 2, params.squash, params.dotGap);
-        } else if (isPlushMode && params.dotShape === 'bevel') {
-          // Plush+Bevel: 高解像度BevelGeometry (seg 32) でdisplacement対応
-          stoneGeo = buildBevelGeo(params.spacing / 2, params.squash, params.dotGap, 32);
-        } else if (params.dotShape === 'square')
+        // Plush時もベースは通常のSmoothジオメトリを使用（毛羽は上にプレーンで重畳）
+        if (params.dotShape === 'square')
           stoneGeo = buildBoxGeo(params.spacing / 2, params.squash, params.dotGap);
         else if (params.dotShape === 'bevel')
           stoneGeo = buildBevelGeo(params.spacing / 2, params.squash, params.dotGap);
@@ -946,17 +970,11 @@
             const frontMat = isPlush
               ? new THREE.MeshPhysicalMaterial({
                   map: frontTex,
-                  roughness: 0.95,
+                  roughness: 0.92,
                   metalness: 0.0,
-                  sheen: 1.0,
+                  sheen: 0.6,
                   sheenColor: new THREE.Color(0xf5f0e8),
-                  sheenRoughness: 0.35,
-                  normalMap: getPlushNormalMap(),
-                  normalScale: new THREE.Vector2(1.5, 1.5),
-                  roughnessMap: getPlushRoughnessMap(),
-                  displacementMap: getPlushDisplacementMap(),
-                  displacementScale: params.spacing * 0.08,
-                  displacementBias: -params.spacing * 0.03,
+                  sheenRoughness: 0.5,
                 })
               : new THREE.MeshStandardMaterial({
                   map: frontTex, roughness: params.roughness, metalness: params.metalness
@@ -964,17 +982,11 @@
             const backMat = isPlush
               ? new THREE.MeshPhysicalMaterial({
                   map: backTex,
-                  roughness: 0.95,
+                  roughness: 0.92,
                   metalness: 0.0,
-                  sheen: 1.0,
+                  sheen: 0.6,
                   sheenColor: new THREE.Color(0xf5f0e8),
-                  sheenRoughness: 0.35,
-                  normalMap: getPlushNormalMap(),
-                  normalScale: new THREE.Vector2(1.5, 1.5),
-                  roughnessMap: getPlushRoughnessMap(),
-                  displacementMap: getPlushDisplacementMap(),
-                  displacementScale: params.spacing * 0.08,
-                  displacementBias: -params.spacing * 0.03,
+                  sheenRoughness: 0.5,
                 })
               : new THREE.MeshStandardMaterial({
                   map: backTex, roughness: params.roughness, metalness: params.metalness
@@ -993,6 +1005,82 @@
 
             const group = new THREE.Group();
             group.add(stoneMesh);
+
+            // Plush: smooth表面の上に高ポリ毛羽プレーンを前後に追加
+            if (isPlush) {
+              const isBevel = params.dotShape === 'bevel';
+              const gapFactor = params.dotGap ? (isBevel ? 0.96 : 0.92) : 1.0;
+              const furSize = params.spacing * gapFactor;
+              const applyChamfer = (geo) => {
+                if (!isBevel) return;
+                const R = furSize / 2;
+                const chamfer = R * 0.15;
+                const pos = geo.attributes.position;
+                for (let i = 0; i < pos.count; i++) {
+                  const x = pos.getX(i), y = pos.getY(i);
+                  const dx = Math.abs(x) - (R - chamfer);
+                  const dy = Math.abs(y) - (R - chamfer);
+                  if (dx > 0 && dy > 0) {
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 0) {
+                      const s = Math.min(chamfer / dist, 1);
+                      pos.setX(i, Math.sign(x) * ((R - chamfer) + dx * s));
+                      pos.setY(i, Math.sign(y) * ((R - chamfer) + dy * s));
+                    }
+                  }
+                }
+                pos.needsUpdate = true;
+                geo.computeVertexNormals();
+              };
+              const furGeoFront = new THREE.PlaneGeometry(furSize, furSize, 48, 48);
+              applyChamfer(furGeoFront);
+              const furGeoBack = new THREE.PlaneGeometry(furSize, furSize, 48, 48);
+              applyChamfer(furGeoBack);
+              // 背面用: BoxGeometry裏面のUV規則に合わせUとVを反転
+              const bUV = furGeoBack.attributes.uv;
+              for (let i = 0; i < bUV.count; i++) {
+                bUV.setXY(i, 1 - bUV.getX(i), 1 - bUV.getY(i));
+              }
+              bUV.needsUpdate = true;
+
+              const makeFurMat = (tex) => new THREE.MeshPhysicalMaterial({
+                map: tex,
+                transparent: false,
+                roughness: 0.95,
+                metalness: 0.0,
+                sheen: 1.0,
+                sheenColor: new THREE.Color(0xf5f0e8),
+                sheenRoughness: 0.35,
+                normalMap: getPlushNormalMap(),
+                normalScale: new THREE.Vector2(1.5, 1.5),
+                roughnessMap: getPlushRoughnessMap(),
+                displacementMap: getPlushDisplacementMap(),
+                displacementScale: params.spacing * 0.08,
+                displacementBias: 0,
+                polygonOffset: true,
+                polygonOffsetFactor: -1,
+                polygonOffsetUnits: -1,
+              });
+
+              const plateTop = params.spacing * params.squash;
+              // 毛羽の根元を板内部に埋め込み、tip だけが板表面から突出
+              const furBaseZ = plateTop * 0.3;
+              const furFrontMat = makeFurMat(frontTex);
+              const furFrontMesh = new THREE.Mesh(furGeoFront, furFrontMat);
+              furFrontMesh.position.z = furBaseZ;
+              furFrontMesh.castShadow = true;
+              furFrontMesh.receiveShadow = true;
+
+              const furBackMat = makeFurMat(backTex);
+              const furBackMesh = new THREE.Mesh(furGeoBack, furBackMat);
+              furBackMesh.position.z = -furBaseZ;
+              furBackMesh.rotation.y = Math.PI;
+              furBackMesh.castShadow = true;
+              furBackMesh.receiveShadow = true;
+
+              group.add(furFrontMesh);
+              group.add(furBackMesh);
+            }
 
             group.position.set(
               col * params.spacing - offsetX,
